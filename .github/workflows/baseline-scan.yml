@@ -36,7 +36,7 @@ jobs:
       - name: Smoke test /health
         run: |
           docker run -d --name app -p 8080:8080 "$IMAGE"
-          for i in $(seq 1 30); do
+          for _ in $(seq 1 30); do
             curl -fsS http://localhost:8080/health && exit 0
             sleep 2
           done
@@ -51,6 +51,9 @@ jobs:
       # is a Phase 4 (supply chain) task.
       - name: Trivy scan (table, all severities)
         run: |
+          # Create the output dir as the runner user first; otherwise Docker
+          # creates it as root and the runner can't write files into it.
+          mkdir -p trivy-out
           docker run --rm \
             -v /var/run/docker.sock:/var/run/docker.sock \
             -v "$PWD/trivy-out:/out" \
