@@ -68,17 +68,11 @@ jobs:
       - name: Severity counts to job summary
         run: |
           {
-            echo "## Baseline scan: $IMAGE"
-            echo
-            echo "| Severity | Count |"
-            echo "|---|---|"
-            jq -r '[.Results[]?.Vulnerabilities[]?.Severity]
-                   | group_by(.) | map("| \(.[0]) | \(length) |") | .[]' \
-              trivy-out/baseline.json
+            python3 scripts/trivy_report.py baseline=trivy-out/baseline.json --top 15
             echo
             echo "Image size: $(docker image inspect "$IMAGE" --format '{{.Size}}' | numfmt --to=iec)"
             echo "Container user: $(docker exec app id)"
-          } >> "$GITHUB_STEP_SUMMARY"
+          } | tee trivy-out/summary.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload scan results
         if: always()

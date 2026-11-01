@@ -1,0 +1,32 @@
+{
+  "SchemaVersion": 2,
+  "ArtifactName": "secure-java-api:baseline",
+  "ArtifactType": "container_image",
+  "Results": [
+    {
+      "Target": "secure-java-api:baseline (oracle 8.5)",
+      "Class": "os-pkgs",
+      "Type": "oracle",
+      "Vulnerabilities": [
+        {"VulnerabilityID": "CVE-0000-0001", "PkgName": "openssl-libs", "InstalledVersion": "1:1.1.1k-5", "FixedVersion": "1:1.1.1k-9", "Severity": "CRITICAL"},
+        {"VulnerabilityID": "CVE-0000-0002", "PkgName": "glibc", "InstalledVersion": "2.28-164", "FixedVersion": "", "Severity": "HIGH"},
+        {"VulnerabilityID": "CVE-0000-0003", "PkgName": "zlib", "InstalledVersion": "1.2.11-17", "FixedVersion": "1.2.11-18", "Severity": "MEDIUM"},
+        {"VulnerabilityID": "CVE-0000-0004", "PkgName": "curl", "InstalledVersion": "7.61.1-22", "FixedVersion": "", "Severity": "low"}
+      ]
+    },
+    {
+      "Target": "app.jar",
+      "Class": "lang-pkgs",
+      "Type": "jar",
+      "Vulnerabilities": [
+        {"VulnerabilityID": "CVE-0000-0005", "PkgName": "org.example:lib", "InstalledVersion": "1.0", "FixedVersion": "1.1", "Severity": "HIGH"},
+        {"VulnerabilityID": "CVE-0000-0006", "PkgName": "org.example:other", "InstalledVersion": "2.0", "Severity": "WEIRD"}
+      ]
+    },
+    {
+      "Target": "Java",
+      "Class": "lang-pkgs",
+      "Type": "jar"
+    }
+  ]
+}

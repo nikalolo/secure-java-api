@@ -5,3 +5,6 @@ trivy-out/
 .vscode/
 *.iml
 .env
+__pycache__/
+*.pyc
+.pytest_cache/
