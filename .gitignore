@@ -1,0 +1,7 @@
+target/
+trivy-out/
+*.log
+.idea/
+.vscode/
+*.iml
+.env

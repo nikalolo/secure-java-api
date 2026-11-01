@@ -1,0 +1,85 @@
+name: Baseline image scan
+
+# Run on every push to main, and manually from the Actions tab.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Least privilege: this job only needs to read the repo.
+# (Phase 4 covers why the default token permissions are too broad.)
+permissions:
+  contents: read
+
+jobs:
+  build-and-scan:
+    runs-on: ubuntu-latest
+    env:
+      IMAGE: secure-java-api:baseline
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v5
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+
+      - name: Build JAR
+        run: mvn -B -ntp package -DskipTests
+
+      - name: Build Docker image
+        run: docker build -t "$IMAGE" .
+
+      - name: Smoke test /health
+        run: |
+          docker run -d --name app -p 8080:8080 "$IMAGE"
+          for i in $(seq 1 30); do
+            curl -fsS http://localhost:8080/health && exit 0
+            sleep 2
+          done
+          docker logs app
+          exit 1
+
+      - name: Which user does the container run as?
+        run: docker exec app id
+
+      # Trivy runs from its own container and reads our image through the
+      # Docker socket. Known shortcut: ":latest" is NOT pinned — fixing that
+      # is a Phase 4 (supply chain) task.
+      - name: Trivy scan (table, all severities)
+        run: |
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "$PWD/trivy-out:/out" \
+            aquasec/trivy:latest image \
+              --format json --output /out/baseline.json \
+              --exit-code 0 "$IMAGE"
+          docker run --rm \
+            -v "$PWD/trivy-out:/out" \
+            aquasec/trivy:latest convert \
+              --format table /out/baseline.json | tee trivy-out/baseline.txt
+
+      - name: Severity counts to job summary
+        run: |
+          {
+            echo "## Baseline scan: $IMAGE"
+            echo
+            echo "| Severity | Count |"
+            echo "|---|---|"
+            jq -r '[.Results[]?.Vulnerabilities[]?.Severity]
+                   | group_by(.) | map("| \(.[0]) | \(length) |") | .[]' \
+              trivy-out/baseline.json
+            echo
+            echo "Image size: $(docker image inspect "$IMAGE" --format '{{.Size}}' | numfmt --to=iec)"
+            echo "Container user: $(docker exec app id)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload scan results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-baseline
+          path: trivy-out/
