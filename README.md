@@ -13,8 +13,8 @@ Each phase adds a security practice and records the before/after evidence.
 
 | Phase | Practice | Status |
 |---|---|---|
-| 1 | Baseline: naive container + first Trivy scan | In progress |
-| 2 | Container hardening | Planned |
+| 1 | Baseline: naive container + first Trivy scan | Built; image scan runs on first push |
+| 2 | Container hardening | Built and verified locally; CI comparison runs on first push |
 | 3 | SAST (Semgrep) and dependency scanning | Planned |
 | 4 | CI/CD security gates | Planned |
 | 5 | DAST (OWASP ZAP) | Planned |
@@ -24,12 +24,30 @@ Each phase adds a security practice and records the before/after evidence.
 ## Run locally
 
 ```bash
-mvn package
-docker build -t secure-java-api:baseline .
-docker run --rm -p 8080:8080 secure-java-api:baseline
+# Tests
+mvn verify
+python -m pytest tests
+
+# Hardened image (builds the JAR inside Docker), run locked down
+docker build -t secure-java-api:hardened -f Dockerfile.hardened .
+docker run --rm -p 8080:8080 --read-only --tmpfs /tmp:rw,noexec,nosuid,size=64m \
+  --cap-drop ALL --security-opt no-new-privileges:true secure-java-api:hardened
 curl http://localhost:8080/health
+
+# Baseline image (for comparison; needs the JAR from mvn package)
+docker build -t secure-java-api:baseline .
 ```
+
+## CI workflows
+
+| Workflow | What it does |
+|---|---|
+| `ci.yml` | Java tests (`mvn verify`) and script tests (pytest) on every push/PR |
+| `baseline-scan.yml` | Builds the naive image, smoke-tests it, Trivy-scans it |
+| `hardened-scan.yml` | Builds both images, runs the hardened one locked down, asserts non-root and read-only FS, compares Trivy results |
 
 ## Evidence
 
-- [Baseline scan](docs/baseline-scan.md)
+- [Baseline image scan](docs/baseline-scan.md)
+- [Baseline config scan (Checkov, actionlint)](docs/baseline-config-scan.md)
+- [Phase 2: container hardening](docs/phase2-container-hardening.md)
