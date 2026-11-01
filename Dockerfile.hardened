@@ -1,0 +1,38 @@
+# HARDENED Dockerfile (Phase 2). Compare with ./Dockerfile (baseline).
+# checkov:skip=CKV_DOCKER_2: health is checked by the orchestrator/CI (GET /health); the JRE image has no curl, and adding one only for HEALTHCHECK adds attack surface.
+
+# ---- Stage 1: build -------------------------------------------------------
+# Full JDK + Maven exist only in this stage; none of it ships in the final image.
+FROM maven:3.9-eclipse-temurin-17 AS build
+WORKDIR /src
+
+# Copy pom.xml alone first: dependency downloads are cached as a layer and
+# only re-run when dependencies change, not on every code change.
+COPY pom.xml .
+RUN mvn -B -ntp dependency:go-offline
+
+COPY src ./src
+RUN mvn -B -ntp package -DskipTests
+
+# ---- Stage 2: runtime -----------------------------------------------------
+# Maintained Eclipse Temurin JRE (no compiler, no Maven) instead of the
+# deprecated openjdk image. Tag pinning by digest is a Phase 4 task.
+FROM eclipse-temurin:17-jre
+
+# Dedicated unprivileged user with a fixed numeric UID/GID, no home, no shell.
+# A numeric UID lets Kubernetes enforce runAsNonRoot.
+RUN groupadd --system --gid 10001 app \
+ && useradd --system --uid 10001 --gid app --no-create-home --shell /usr/sbin/nologin app
+
+WORKDIR /app
+
+# Owned by root, readable by everyone: the app user can run the JAR but
+# cannot modify it if the process is compromised.
+COPY --from=build /src/target/app.jar /app/app.jar
+
+USER 10001:10001
+EXPOSE 8080
+
+# Respect container memory limits and exit (so the orchestrator restarts us)
+# instead of limping along after an OutOfMemoryError.
+ENTRYPOINT ["java", "-XX:MaxRAMPercentage=75", "-XX:+ExitOnOutOfMemoryError", "-jar", "/app/app.jar"]
