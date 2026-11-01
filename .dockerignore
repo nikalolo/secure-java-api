@@ -1,0 +1,21 @@
+# Keep the build context small and free of secrets.
+# Anything not excluded here can be COPY'd into an image by mistake.
+.git
+.github
+.idea
+.vscode
+*.iml
+# Build output, except the JAR that the baseline Dockerfile copies.
+target/*
+!target/app.jar
+trivy-out
+docs
+tests
+scripts
+**/__pycache__
+.pytest_cache
+.env
+.env.*
+*.pem
+*.key
+*.log
