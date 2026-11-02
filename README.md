@@ -13,8 +13,8 @@ Each phase adds a security practice and records the before/after evidence.
 
 | Phase | Practice | Status |
 |---|---|---|
-| 1 | Baseline: naive container + first Trivy scan | Built; image scan runs on first push |
-| 2 | Container hardening | Built and verified locally; CI comparison runs on first push |
+| 1 | Baseline: naive container + first Trivy scan | Done locally: 391 findings (8 CRITICAL, 134 HIGH) |
+| 2 | Container hardening | Done locally: 113 findings (8 CRITICAL, 19 HIGH), non-root, read-only FS |
 | 3 | SAST (Semgrep) and dependency scanning | Planned |
 | 4 | CI/CD security gates | Planned |
 | 5 | DAST (OWASP ZAP) | Planned |
