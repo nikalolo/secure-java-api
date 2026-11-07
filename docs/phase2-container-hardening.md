@@ -8,7 +8,7 @@ CI: [`hardened-scan.yml`](../.github/workflows/hardened-scan.yml) builds both, r
 
 | Control | Baseline | Hardened | Why it matters |
 |---|---|---|---|
-| Base image | `openjdk:17` (deprecated, unmaintained) | `eclipse-temurin:17-jre` (maintained) | Unmaintained images never get CVE fixes |
+| Base image | `openjdk:17.0.2` (deprecated, unmaintained; `openjdk:17` itself was removed, see [baseline-scan.md](baseline-scan.md#note-openjdk17-no-longer-exists)) | `eclipse-temurin:17-jre` (maintained) | Unmaintained images never get CVE fixes |
 | JDK vs JRE | Full JDK | JRE only | No compiler or dev tools for an attacker to use |
 | Build tools in image | n/a (built on runner) | Multi-stage: Maven/JDK stay in the build stage | Final image contains only what runs |
 | Process user | root (UID 0) | `app`, UID 10001, no shell, no home | A code-execution bug doesn't hand out root |
@@ -40,18 +40,44 @@ CI: [`hardened-scan.yml`](../.github/workflows/hardened-scan.yml) builds both, r
 
 The local runtime test used a small busybox image because this sandbox cannot pull base images. The same assertions run against the real hardened image in CI.
 
-### Pending first CI run
+### Real images, verified locally (2026-11-02)
+
+Windows 11 + Docker Desktop 29.9.2, hardened image run with every flag above:
+
+| Check | Result |
+|---|---|
+| `GET /health` / `POST /health` | `{"status":"UP"}` / 405 |
+| `docker exec app id` | `uid=10001(app) gid=10001(app)` (baseline: `uid=0(root)`) |
+| `ReadonlyRootfs` | `true`; `touch /pwned` as root refused: `Read-only file system` |
+| `/app/app.jar` | owned by `0 0`, `-rw-r--r--`; append as app user refused: `Permission denied` |
+| `/tmp` | write succeeds; running a copied binary refused (`Permission denied`, exit 126) |
+| `/proc/1/status` | `CapEff: 0000000000000000`, `NoNewPrivs: 1` (baseline: `CapEff: 00000000a80425fb`) |
+
+### Trivy comparison (local, 2026-11-02)
+
+Trivy 0.76.1, both images scanned seconds apart with the same vulnerability DB.
 
 | Metric | Baseline | Hardened |
 |---|---|---|
-| CRITICAL | | |
-| HIGH | | |
-| MEDIUM | | |
-| LOW | | |
-| Image size | | |
-| Container UID | | |
+| CRITICAL | 8 | 8 |
+| HIGH | 134 | 19 |
+| MEDIUM | 221 | 74 |
+| LOW | 28 | 12 |
+| **Total** | **391** | **113** |
+| Image size | 732 MiB | 446 MiB |
+| Container UID | 0 (root) | 10001 (app) |
 
-Filled from the `trivy-comparison` artifact of `hardened-scan.yml`.
+Split by layer:
+
+| Layer | Baseline | Hardened |
+|---|---|---|
+| OS packages | Oracle Linux 8.5: 0 C / 115 H / 200 M / 20 L, 335 of 335 fixable | Ubuntu 26.04: 0 C / 0 H / 53 M / 4 L, 0 of 57 fixable |
+| `app.jar` | 8 C / 19 H / 21 M / 8 L, 56 of 56 fixable | identical |
+
+All 8 CRITICAL and all 19 HIGH left in the hardened image are in `app.jar` (Tomcat 10.1.48, Spring
+Framework 6.2.12, Spring Boot 3.5.7, Jackson 2.19.2): the image change can't remove them, only a
+dependency upgrade can (Phase 3). Full list: [baseline-scan.md](baseline-scan.md#criticalhigh-in-appjar).
+The CI run of `hardened-scan.yml` (`trivy-comparison` artifact) should reproduce these numbers.
 
 ## Deliberately deferred
 

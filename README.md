@@ -13,8 +13,8 @@ Each phase adds a security practice and records the before/after evidence.
 
 | Phase | Practice | Status |
 |---|---|---|
-| 1 | Baseline: naive container + first Trivy scan | Built; image scan runs on first push |
-| 2 | Container hardening | Built and verified locally; CI comparison runs on first push |
+| 1 | Baseline: naive container + first Trivy scan | Done locally: 391 findings (8 CRITICAL, 134 HIGH) |
+| 2 | Container hardening | Done locally: 113 findings (8 CRITICAL, 19 HIGH), non-root, read-only FS |
 | 3 | SAST (Semgrep) and dependency scanning | Planned |
 | 4 | CI/CD security gates | Planned |
 | 5 | DAST (OWASP ZAP) | Planned |
@@ -23,9 +23,13 @@ Each phase adds a security practice and records the before/after evidence.
 
 ## Run locally
 
+No Maven install needed: the Maven Wrapper downloads a pinned Maven 3.9.16
+(checked against a SHA-256 in `.mvn/wrapper/maven-wrapper.properties`).
+Use `./mvnw` on Linux/macOS/Git Bash and `.\mvnw.cmd` on Windows.
+
 ```bash
 # Tests
-mvn verify
+./mvnw verify            # Windows: .\mvnw.cmd verify
 python -m pytest tests
 
 # Hardened image (builds the JAR inside Docker), run locked down
@@ -34,7 +38,7 @@ docker run --rm -p 8080:8080 --read-only --tmpfs /tmp:rw,noexec,nosuid,size=64m 
   --cap-drop ALL --security-opt no-new-privileges:true secure-java-api:hardened
 curl http://localhost:8080/health
 
-# Baseline image (for comparison; needs the JAR from mvn package)
+# Baseline image (for comparison; needs the JAR from ./mvnw package)
 docker build -t secure-java-api:baseline .
 ```
 
