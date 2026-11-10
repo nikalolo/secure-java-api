@@ -1,0 +1,20 @@
+rules:
+  - id: spring-error-details-exposed
+    languages: [regex]
+    severity: WARNING
+    message: >-
+      Spring Boot error responses include stack traces or exception messages.
+      They show callers internal class names, versions and sometimes data;
+      leave server.error.include-stacktrace and include-message at their
+      defaults (never).
+    # properties files only; application.yml needs its own pattern if added.
+    pattern-regex: (?im)^[ \t]*server\.error\.(?:include-stacktrace[ \t]*[=:][ \t]*(?:always|on[-_]param)|include-message[ \t]*[=:][ \t]*always)[ \t]*$
+    paths:
+      include:
+        - "*.properties"
+    metadata:
+      category: security
+      subcategory: [audit]
+      cwe: "CWE-209: Generation of Error Message Containing Sensitive Information"
+      references:
+        - https://docs.spring.io/spring-boot/appendix/application-properties/index.html

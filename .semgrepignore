@@ -1,0 +1,12 @@
+# this file replaces semgrep's default ignores (which skip test/ and tests/).
+# src/test/ and tests/ stay in scope on purpose. .semgrep/canary/ is scanned
+# on purpose too; code-scan.sh leaves it out of the reported numbers.
+.git/
+target/
+trivy-out/
+scan-out/
+.semgrep/rules/
+.pytest_cache/
+__pycache__/
+.idea/
+.vscode/

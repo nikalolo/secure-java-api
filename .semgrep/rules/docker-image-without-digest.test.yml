@@ -1,0 +1,27 @@
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    env:
+      # ruleid: docker-image-without-digest
+      SCANNER: aquasec/trivy:latest
+      # ok: docker-image-without-digest
+      PINNED: aquasec/trivy:0.58.1@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+    steps:
+      - uses: actions/checkout@v5
+      - run: |
+          # ok: docker-image-without-digest
+          docker run -d --name app -p 8080:8080 "$IMAGE"
+          # ok: docker-image-without-digest
+          curl -fsS http://localhost:8080/health
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "$PWD/trivy-out:/out" \
+            -v trivy-cache:/root/.cache/trivy \
+            # ruleid: docker-image-without-digest
+            aquasec/trivy:latest image app:1
+          # ruleid: docker-image-without-digest
+          docker run --rm ghcr.io/gitleaks/gitleaks:v8.30.0 version
+          # ruleid: docker-image-without-digest
+          IMG="semgrep/semgrep:1.184.0"
+          # ok: docker-image-without-digest
+          docker run --rm semgrep/semgrep:1.184.0@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef semgrep --version

@@ -1,5 +1,6 @@
 target/
 trivy-out/
+scan-out/
 *.log
 .idea/
 .vscode/

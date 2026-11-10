@@ -1,0 +1,23 @@
+rules:
+  - id: docker-image-without-digest
+    languages: [regex]
+    severity: WARNING
+    message: >-
+      Image $IMAGE is referenced by tag only. A tag can be moved to different
+      content (aquasec/trivy:latest served a malicious image in March 2026);
+      pin it as name:tag@sha256:<digest>.
+    # matches the image token, not the docker run line: refs often sit on a
+    # continuation line, and "$IMAGE" runs of locally built images must not fire.
+    # known gaps: untagged refs (ns/name) and official images without a namespace.
+    pattern-regex: (?<=[\s"'=])(?P<IMAGE>[a-z0-9][a-z0-9._-]*(?:/[a-z0-9][a-z0-9._-]*)+:[A-Za-z0-9_][A-Za-z0-9._-]{0,127})(?![A-Za-z0-9._-]|@)
+    paths:
+      include:
+        - "*.yml"
+        - "*.yaml"
+        - "*.sh"
+    metadata:
+      category: security
+      subcategory: [audit]
+      cwe: "CWE-829: Inclusion of Functionality from Untrusted Control Sphere"
+      references:
+        - https://osv.dev/vulnerability/GHSA-69fq-xp46-6x23
