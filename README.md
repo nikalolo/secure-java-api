@@ -13,9 +13,9 @@ Each phase adds a security practice and records the before/after evidence.
 
 | Phase | Practice | Status |
 |---|---|---|
-| 1 | Baseline: naive container + first Trivy scan | Done locally: 391 findings (8 CRITICAL, 134 HIGH) |
-| 2 | Container hardening | Done locally: 113 findings (8 CRITICAL, 19 HIGH), non-root, read-only FS |
-| 3 | SAST (Semgrep) and dependency scanning | Planned |
+| 1 | Baseline: naive container + first Trivy scan | Done locally: 391 findings (8 CRITICAL, 134 HIGH), Spring Boot 3.5.7 |
+| 2 | Container hardening | Done locally: 113 findings (8 CRITICAL, 19 HIGH), non-root, read-only FS, Spring Boot 3.5.7 |
+| 3 | SAST (Semgrep), dependency and secret scanning | Done: app JAR 59 to 21 to 0 findings (Spring Boot 3.5.7 to 3.5.16 to 4.1.2), 0 secrets in history |
 | 4 | CI/CD security gates | Planned |
 | 5 | DAST (OWASP ZAP) | Planned |
 | 6 | Cloud and IaC security | Planned |
@@ -40,6 +40,14 @@ curl http://localhost:8080/health
 
 # Baseline image (for comparison; needs the JAR from ./mvnw package)
 docker build -t secure-java-api:baseline .
+
+# Code scan: Semgrep + Trivy on pom.xml and app.jar
+# (needs Docker, jq, Python and ~/.m2 filled by this build)
+./mvnw -B -ntp package -DskipTests
+scripts/code-scan.sh
+
+# One-off secret scan of the full local git history (gitleaks)
+scripts/history-scan.sh
 ```
 
 ## CI workflows
@@ -49,9 +57,11 @@ docker build -t secure-java-api:baseline .
 | `ci.yml` | Java tests (`mvn verify`) and script tests (pytest) on every push/PR |
 | `baseline-scan.yml` | Builds the naive image, smoke-tests it, Trivy-scans it |
 | `hardened-scan.yml` | Builds both images, runs the hardened one locked down, asserts non-root and read-only FS, compares Trivy results |
+| `code-scan.yml` | Runs `scripts/code-scan.sh` (Semgrep, Trivy on pom and JAR, secrets) with canary checks, on push to main and every PR |
 
 ## Evidence
 
 - [Baseline image scan](docs/baseline-scan.md)
 - [Baseline config scan (Checkov, actionlint)](docs/baseline-config-scan.md)
 - [Phase 2: container hardening](docs/phase2-container-hardening.md)
+- [Phase 3: SAST, dependency and secret scanning](docs/phase3-sast-sca.md)
