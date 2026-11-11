@@ -70,8 +70,10 @@ if [ "$(uname -s)" = Linux ]; then
   mkdir -p "$trivy_cache"
 fi
 
+# scanners get the repo read-only; they write only to the output mount
 semgrep() {
-  docker run --rm ${docker_user[@]+"${docker_user[@]}"} -v "$SRC:/src" -w /src \
+  docker run --rm ${docker_user[@]+"${docker_user[@]}"} \
+    -v "$SRC:/src:ro" -v "$SRC/$OUT:/out" -w /src \
     "$SEMGREP_IMAGE" semgrep "$@"
 }
 
@@ -86,7 +88,7 @@ rc=0
 semgrep scan --metrics=off --quiet \
   --config p/java --config p/owasp-top-ten --config p/github-actions \
   --config "r/$REQUEST_MAPPING_RULE" --config .semgrep/rules/ \
-  --json --output "$OUT/semgrep.json" . || rc=$?
+  --json --output /out/semgrep.json . || rc=$?
 if [ "$rc" -ne 0 ]; then
   echo "semgrep failed (exit $rc)" >&2
   if [ -s "$OUT/semgrep.json" ]; then
