@@ -106,11 +106,11 @@ def single_report(label: str, report: dict, top: int) -> str:
     return "\n".join(lines)
 
 
-def comparison(reports: list[tuple[str, dict]]) -> str:
+def comparison(reports: list[tuple[str, dict]], title: str = "Image comparison") -> str:
     counts = [(label, count_by_severity(load_findings(r))) for label, r in reports]
     header = "| Severity | " + " | ".join(label for label, _ in counts) + " |"
     sep = "|---|" + "---|" * len(counts)
-    lines = ["## Image comparison", "", header, sep]
+    lines = [f"## {title}", "", header, sep]
     for s in SEVERITIES:
         lines.append(f"| {s} | " + " | ".join(str(c[s]) for _, c in counts) + " |")
     totals = " | ".join(f"**{sum(c.values())}**" for _, c in counts)
@@ -118,10 +118,47 @@ def comparison(reports: list[tuple[str, dict]]) -> str:
     return "\n".join(lines)
 
 
+def only_in(a: list[Finding], b: list[Finding]) -> list[Finding]:
+    """Findings in a whose (CVE, package, installed version) is not in b.
+
+    The version is part of the key: a different resolved version is exactly
+    the difference a pom-vs-JAR comparison is looking for.
+    """
+    in_b = {(f.vuln_id, f.pkg, f.installed) for f in b}
+    seen = set()
+    out = []
+    for f in a:
+        key = (f.vuln_id, f.pkg, f.installed)
+        if key not in in_b and key not in seen:
+            seen.add(key)
+            out.append(f)
+    out.sort(key=lambda f: (SEVERITIES.index(f.severity), f.vuln_id, f.pkg))
+    return out
+
+
+def difference(a: tuple[str, dict], b: tuple[str, dict]) -> str:
+    (label_a, report_a), (label_b, report_b) = a, b
+    findings_a, findings_b = load_findings(report_a), load_findings(report_b)
+    rows = [(label_a, f) for f in only_in(findings_a, findings_b)]
+    rows += [(label_b, f) for f in only_in(findings_b, findings_a)]
+    lines = ["### Only in one report (CVE, package, installed version)", ""]
+    if not rows:
+        lines.append(f"None: {label_a} and {label_b} report the same findings.")
+        return "\n".join(lines)
+    lines += ["| Only in | ID | Severity | Package | Installed |", "|---|---|---|---|---|"]
+    lines += [
+        f"| {label} | {f.vuln_id} | {f.severity} | {f.pkg} | {f.installed} |"
+        for label, f in rows
+    ]
+    return "\n".join(lines)
+
+
 def parse_args(argv: list[str]) -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("reports", nargs="+", metavar="LABEL=FILE")
     p.add_argument("--top", type=int, default=10, help="CRITICAL/HIGH rows to list")
+    p.add_argument("--title", default="Image comparison", help="heading of the comparison table")
+    p.add_argument("--diff", action="store_true", help="with two reports, list findings only one has")
     return p.parse_args(argv)
 
 
@@ -139,9 +176,15 @@ def main(argv: list[str] | None = None) -> int:
             print(f"error: cannot read {path}: {exc}", file=sys.stderr)
             return 2
 
+    if args.diff and len(loaded) != 2:
+        print("error: --diff needs exactly two reports", file=sys.stderr)
+        return 2
+
     parts = [single_report(label, r, args.top) for label, r in loaded]
+    if args.diff:
+        parts.insert(0, difference(loaded[0], loaded[1]))
     if len(loaded) > 1:
-        parts.insert(0, comparison(loaded))
+        parts.insert(0, comparison(loaded, args.title))
     print("\n\n".join(parts))
     return 0
 

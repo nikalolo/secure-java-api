@@ -62,6 +62,29 @@ def test_comparison_table_has_one_column_per_report(tmp_path, capsys):
     assert "| CRITICAL | 1 | 0 |" in out
 
 
+def test_diff_lists_findings_with_a_different_installed_version(tmp_path, capsys):
+    other = sample()
+    vulns = other["Results"][1]["Vulnerabilities"]
+    vulns[0]["InstalledVersion"] = "9.9.9"  # same CVE and package, other version
+    path = tmp_path / "other.json"
+    path.write_text(json.dumps(other))
+    rc = tr.main(["--diff", "--title", "Repo vs JAR", f"repo={FIXTURE}", f"jar={path}"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "## Repo vs JAR" in out
+    vuln = vulns[0]
+    assert f"| jar | {vuln['VulnerabilityID']} |" in out and "| 9.9.9 |" in out
+    assert f"| repo | {vuln['VulnerabilityID']} |" in out
+
+
+def test_diff_of_identical_reports_says_none(capsys):
+    rc = tr.main(["--diff", f"a={FIXTURE}", f"b={FIXTURE}"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "None: a and b report the same findings." in out
+    assert tr.main(["--diff", f"a={FIXTURE}"]) == 2
+
+
 def test_bad_argument_returns_error_code(capsys):
     assert tr.main(["no-equals-sign"]) == 2
     assert tr.main([f"x={FIXTURE.parent / 'missing.json'}"]) == 2
