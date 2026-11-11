@@ -118,30 +118,46 @@ def comparison(reports: list[tuple[str, dict]], title: str = "Image comparison")
     return "\n".join(lines)
 
 
-def only_in(a: list[Finding], b: list[Finding]) -> list[Finding]:
-    """Findings in a whose (CVE, package, installed version) is not in b.
+DIFF_KEYS = {
+    "cve-pkg-version": "CVE, package, installed version",
+    "cve-pkg": "CVE, package",
+}
 
-    The version is part of the key: a different resolved version is exactly
-    the difference a pom-vs-JAR comparison is looking for.
+
+def diff_key(f: Finding, key: str) -> tuple[str, ...]:
+    if key == "cve-pkg":
+        return (f.vuln_id, f.pkg)
+    return (f.vuln_id, f.pkg, f.installed)
+
+
+def only_in(a: list[Finding], b: list[Finding], key: str = "cve-pkg-version") -> list[Finding]:
+    """Findings in a whose diff key is not in b.
+
+    cve-pkg-version (default) suits pom-vs-JAR: a different resolved version
+    is the difference. cve-pkg suits a version bump: every surviving CVE
+    changes version, so the version must not be part of the key.
     """
-    in_b = {(f.vuln_id, f.pkg, f.installed) for f in b}
+    in_b = {diff_key(f, key) for f in b}
     seen = set()
     out = []
     for f in a:
-        key = (f.vuln_id, f.pkg, f.installed)
-        if key not in in_b and key not in seen:
-            seen.add(key)
+        k = diff_key(f, key)
+        if k not in in_b and k not in seen:
+            seen.add(k)
             out.append(f)
     out.sort(key=lambda f: (SEVERITIES.index(f.severity), f.vuln_id, f.pkg))
     return out
 
 
-def difference(a: tuple[str, dict], b: tuple[str, dict]) -> str:
+def difference(a: tuple[str, dict], b: tuple[str, dict], key: str = "cve-pkg-version") -> str:
     (label_a, report_a), (label_b, report_b) = a, b
     findings_a, findings_b = load_findings(report_a), load_findings(report_b)
-    rows = [(label_a, f) for f in only_in(findings_a, findings_b)]
-    rows += [(label_b, f) for f in only_in(findings_b, findings_a)]
-    lines = ["### Only in one report (CVE, package, installed version)", ""]
+    rows = [(label_a, f) for f in only_in(findings_a, findings_b, key)]
+    rows += [(label_b, f) for f in only_in(findings_b, findings_a, key)]
+    lines = [f"### Only in one report ({DIFF_KEYS[key]})", ""]
+    if key == "cve-pkg":
+        both = {diff_key(f, key) for f in findings_a} & {diff_key(f, key) for f in findings_b}
+        lines += [f"In both: {len(both)}", ""]
     if not rows:
         lines.append(f"None: {label_a} and {label_b} report the same findings.")
         return "\n".join(lines)
@@ -159,6 +175,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--top", type=int, default=10, help="CRITICAL/HIGH rows to list")
     p.add_argument("--title", default="Image comparison", help="heading of the comparison table")
     p.add_argument("--diff", action="store_true", help="with two reports, list findings only one has")
+    p.add_argument("--diff-key", choices=DIFF_KEYS, default="cve-pkg-version",
+                   help="what makes two findings the same; cve-pkg for a version bump")
     return p.parse_args(argv)
 
 
@@ -182,7 +200,7 @@ def main(argv: list[str] | None = None) -> int:
 
     parts = [single_report(label, r, args.top) for label, r in loaded]
     if args.diff:
-        parts.insert(0, difference(loaded[0], loaded[1]))
+        parts.insert(0, difference(loaded[0], loaded[1], args.diff_key))
     if len(loaded) > 1:
         parts.insert(0, comparison(loaded, args.title))
     print("\n\n".join(parts))
