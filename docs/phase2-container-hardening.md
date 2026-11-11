@@ -77,7 +77,7 @@ Split by layer:
 All 8 CRITICAL and all 19 HIGH left in the hardened image are in `app.jar` (Tomcat 10.1.48, Spring
 Framework 6.2.12, Spring Boot 3.5.7, Jackson 2.19.2): the image change can't remove them, only a
 dependency upgrade can (Phase 3). Full list: [baseline-scan.md](baseline-scan.md#criticalhigh-in-appjar).
-The CI run of `hardened-scan.yml` (`trivy-comparison` artifact) should reproduce these numbers.
+The CI run of `hardened-scan.yml` on 2026-11-08 (`trivy-comparison` artifact, Trivy 0.76.2, scanned 6 days later with a newer DB) found 416 / 118, not 391 / 113. The `app.jar` part is fully explained: 59 = these 56 plus 3 Tomcat CVEs added to the DB after 2026-11-02 (0 removed). The OS layers grew by 22 (baseline) and 2 (hardened); only counts can be compared there, because the local Phase 2 image JSON is no longer on disk.
 
 ## Deliberately deferred
 
