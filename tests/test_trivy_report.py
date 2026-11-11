@@ -77,6 +77,23 @@ def test_diff_lists_findings_with_a_different_installed_version(tmp_path, capsys
     assert f"| repo | {vuln['VulnerabilityID']} |" in out
 
 
+def test_diff_key_cve_pkg_ignores_a_version_bump(tmp_path, capsys):
+    bumped = sample()
+    vulns = bumped["Results"][1]["Vulnerabilities"]
+    vulns[0]["InstalledVersion"] = "9.9.9"  # survives the bump
+    fixed = vulns.pop(1)  # fixed by the bump
+    path = tmp_path / "after.json"
+    path.write_text(json.dumps(bumped))
+    rc = tr.main(["--diff", "--diff-key", "cve-pkg", f"before={FIXTURE}", f"after={path}"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    diff = out.split("### Only in one report (CVE, package)")[1].split("\n## ")[0]
+    assert "In both: 5" in diff  # 6 in the fixture, 1 fixed
+    assert f"| before | {fixed['VulnerabilityID']} |" in diff
+    assert vulns[0]["VulnerabilityID"] not in diff
+    assert "| after |" not in diff
+
+
 def test_diff_of_identical_reports_says_none(capsys):
     rc = tr.main(["--diff", f"a={FIXTURE}", f"b={FIXTURE}"])
     out = capsys.readouterr().out
