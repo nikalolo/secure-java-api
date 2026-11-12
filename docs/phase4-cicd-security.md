@@ -6,7 +6,7 @@ by SHA or digest, automated update PRs, and scans that can fail a build.
 
 ## Baseline
 
-Measured on 2026-11-12 against `main` @ `748436f`, before any Phase 4 change. Both tools only read.
+Measured on 2026-11-12 against `main` @ `748436f`, before any Phase 4 change. The tools only read.
 
 | Tool | Version | Looks at | How it was run |
 |---|---|---|---|
