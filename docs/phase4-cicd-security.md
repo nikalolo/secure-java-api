@@ -11,11 +11,14 @@ Measured on 2026-11-12 against `main` @ `748436f`, before any Phase 4 change. Bo
 | Tool | Version | Looks at | How it was run |
 |---|---|---|---|
 | OpenSSF Scorecard | v5.6.0 (release binary, SHA256 checked against `scorecard_checksums.txt`) | The GitHub repo: settings, workflows, history | `scorecard --repo=github.com/nikalolo/secure-java-api --format json --show-details` on Linux (WSL) |
-| zizmor | 1.32.0 (PyPI) | `.github/workflows/*.yml` | `zizmor --format json .github/workflows`, with a GitHub token (online audits) and with `--offline` |
+| zizmor | 1.32.0 (PyPI) | `.github/workflows/*.yml` | `zizmor --persona <p> --format json .github/workflows` for the regular, pedantic and auditor personas, each with a GitHub token (online audits) and with `--offline` |
+| Semgrep | 1.184.0 (digest-pinned image) | workflows, Dockerfiles, code | [`scripts/code-scan.sh`](../scripts/code-scan.sh), same command as Phase 3 |
 
 ### Scorecard: 3.8 / 10
 
 Scorecard gives each check 0-10; `?` means Scorecard could not score the check (nothing to evaluate yet).
+Tracked in this phase: Pinned-Dependencies, Token-Permissions, Branch-Protection, Dangerous-Workflow and
+Dependency-Update-Tool. The overall score is context only.
 
 | Check | Score | Reason reported | Phase 4 |
 |---|---|---|---|
@@ -26,7 +29,7 @@ Scorecard gives each check 0-10; `?` means Scorecard could not score the check (
 | Vulnerabilities | 10 | 0 open vulnerabilities | - |
 | Branch-Protection | 0 | branch protection not enabled on `main` | step 1 |
 | Pinned-Dependencies | 0 | 0 of 13 actions, 0 of 3 Dockerfile base images, 0 of 1 `pip install` pinned by hash | step 2 |
-| Dependency-Update-Tool | 0 | no update tool detected | Dependabot |
+| Dependency-Update-Tool | 0 | no update tool detected | step 3 |
 | SAST | 0 | 0 of 7 commits checked with a SAST tool | see note |
 | Code-Review | 0 | 0 of 21 changesets approved | see note |
 | License | 0 | no license file | - |
@@ -49,24 +52,66 @@ Notes:
   `pip install`. It reported nothing about images started with `docker run` inside workflow steps. Those
   are covered by the Semgrep rule below.
 
-### zizmor: 17 findings
+### zizmor: 17 findings (regular persona)
 
 | Audit | Severity | Count | Where |
 |---|---|---|---|
 | `unpinned-uses` | High | 13 | every `uses:` in the 4 workflows (tags like `@v5`) |
 | `artipacked` | Medium | 4 | checkouts without `persist-credentials: false`: `ci.yml` (2), `baseline-scan.yml`, `hardened-scan.yml` |
 
-Same 17 online and offline. The pedantic persona adds 9 lower ones (26 total): `concurrency-limits` (Low, 4)
-and `anonymous-definition` (Informational, 5).
-
-### Semgrep (from Phase 3, 2026-11-11)
-
-Not re-run for this baseline: the workflows have not changed since.
-
-| Rule | Count | Where |
+| Persona | Offline | Online |
 |---|---|---|
-| `github-actions-mutable-action-tag` | 13 | the same 13 `uses:` lines |
-| custom rule: Docker image without `@sha256` in workflow and shell files | 3 | `aquasec/trivy:latest` in `baseline-scan.yml` (2) and `hardened-scan.yml` (1) |
+| regular | 17 | 17 |
+| pedantic | 26 | 26 |
+| auditor | 26 | 26 |
+
+Pedantic and auditor add the same 9 lower findings: `concurrency-limits` (Low, 4) and
+`anonymous-definition` (Informational, 5). The auditor persona found nothing beyond pedantic.
+
+### Semgrep: 17 findings
+
+Re-run on 2026-11-12 with Semgrep 1.184.0: 17 findings from 3 rules, 0 errors, 6 of 6 canaries fired,
+30 files scanned (including this document; the 2026-11-11 run had 28).
+Same findings as the Phase 3 run on 2026-11-11.
+
+| Rule | Severity | Count | Where |
+|---|---|---|---|
+| `github-actions-mutable-action-tag` | WARNING | 13 | the same 13 `uses:` lines |
+| custom rule: Docker image without `@sha256` in workflow and shell files | WARNING | 3 | `aquasec/trivy:latest` in `baseline-scan.yml` (2) and `hardened-scan.yml` (1) |
+| `missing-user-entrypoint` | ERROR | 1 | `Dockerfile:23`, the deliberately naive baseline image |
+
+The same script run also gave the Trivy numbers the step 4 gate starts from: `app.jar` and `pom.xml`
+0 findings, secrets 0 (Trivy 0.76.2, vulnerability DB of 2026-11-10, frozen with `TRIVY_SKIP_DB_UPDATE=true`).
+The image scans were not re-run for this baseline.
+
+### Own counts
+
+Counted from the files on `main` @ `748436f`.
+
+| What | Count | Where |
+|---|---|---|
+| Actions referenced by tag, not SHA | 13 of 13 | all 4 workflows |
+| Images in workflow steps without a digest | 3 | `baseline-scan.yml:60`, `:65`, `hardened-scan.yml:87` |
+| `FROM` lines without a digest | 3 of 3 | `Dockerfile:14`, `Dockerfile.hardened:6`, `:20` |
+| Workflows without a `pull_request` trigger | 2 of 4 | `baseline-scan.yml`, `hardened-scan.yml` |
+| Workflows calling `mvn` instead of `./mvnw` | 3 of 4 | `ci.yml:23`, `baseline-scan.yml:31`, `hardened-scan.yml:32` |
+| Jobs on `ubuntu-latest` | 5 of 5 | all jobs |
+| Jobs with `timeout-minutes` | 1 of 5 | `code-scan.yml` |
+| Workflows with a `concurrency` group | 0 of 4 | - |
+| Jobs with their own `permissions` block | 0 of 5 | all 4 workflows set it at the top level only |
+| Checkouts with `persist-credentials: false` | 1 of 5 | `code-scan.yml` |
+
+### Check names on main
+
+The names a ruleset has to list. All come from GitHub Actions.
+
+| Workflow | Job = check name | Runs on PRs |
+|---|---|---|
+| `ci.yml` | `java-tests` | yes |
+| `ci.yml` | `script-tests` | yes |
+| `code-scan.yml` | `scan` | yes |
+| `baseline-scan.yml` | `build-and-scan` | no |
+| `hardened-scan.yml` | `compare` | no |
 
 ### Repository settings
 
