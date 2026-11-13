@@ -135,3 +135,70 @@ The Windows build of Scorecard v5.6.0, run on the same commit, reported "no work
 Dangerous-Workflow and "No tokens found" for Token-Permissions, listed only the 3 Dockerfile images under
 Pinned-Dependencies, and scored 2.3. The repo has 4 workflows. The Linux binary found all of them, so the
 numbers above come from the Linux run.
+
+## Step 1: protect main
+
+Done on 2026-11-12. The ruleset was created by hand in the repository settings. The values below were read
+back from the GitHub API on 2026-11-13. Times are UTC.
+
+### Ruleset `protect-main`
+
+Active, targets the default branch, created 2026-11-12 16:32:11. There is no classic branch protection
+next to it.
+
+| Rule | Setting |
+|---|---|
+| Bypass list | empty; the API reports `current_user_can_bypass: never`, so the owner goes through a PR too |
+| Restrict deletions | on |
+| Block force pushes | on |
+| Require linear history | on |
+| Require a pull request before merging | on, 0 required approvals |
+| Allowed merge methods | squash only |
+| Conversations must be resolved before merging | on |
+| Dismiss stale approvals, code owner review, approval of the last push | off |
+| `require_extra_approval_for_unattributed_changes` | on (one more required review for pull requests that are not attributed to a person) |
+| Require status checks to pass | `java-tests`, `script-tests`, `scan`, all three from GitHub Actions |
+| Branch must be up to date before merging | on |
+| Do not require status checks on creation | off |
+
+Two choices that differ from the usual advice:
+
+- **0 required approvals.** GitHub does not let the author approve their own pull request. In a one-person
+  repo with an empty bypass list, a required approval would block every merge.
+- **3 required checks, not 5.** `build-and-scan` and `compare` do not run on pull requests (see "Check names
+  on main"). A required check that never reports stays pending, so requiring them would block every PR.
+
+The repository settings still allow merge commits and rebase merges. On `main` the ruleset narrows that to
+squash.
+
+### Tests
+
+| # | When | Test | Result |
+|---|---|---|---|
+| 1 | 16:25 | Direct push of the 3 baseline commits to `main` | **Accepted** (`748436f..078d798`). The ruleset did not exist yet |
+| 2 | 16:32:57 | Direct push of a new, empty commit (`64dc95f`) to `main` | Rejected (GH013 in the terminal). Failed rules: `pull_request` "Changes must be made through a pull request." and `required_status_checks` "3 of 3 required status checks are expected." |
+| 3 | 16:33:49 | Force push of a rewritten tip (`7fc58a7`, an amended copy of `078d798`) to `main` | Rejected (GH013 in the terminal). Failed rules: `non_fast_forward` "Cannot force-push to this branch", plus the same two as in test 2 |
+
+The times and rule results of tests 2 and 3 come from GitHub's own record of the two pushes (rule suites
+`5076113158` and `5076134590`, read from the API on 2026-11-13). In test 2 `non_fast_forward` is listed as
+passed, in test 3 as failed, so the force-push rule fired on its own and not only the pull request rule.
+
+After tests 2 and 3, `main` on GitHub was still at `078d798`, and the repository's activity log shows the
+16:25 push as the last change to `main` (checked 2026-11-13).
+
+What the tests show, and what they do not:
+
+- **Test 1 ran 7 minutes before the ruleset existed, so it says nothing about the ruleset.** It is also how
+  the three baseline commits (`9115e11`, `d2678e6`, `078d798`) reached `main`: by direct push, without a
+  pull request. The 4 workflows ran on that push and passed, but after the fact, not as a gate. The commits
+  stay as they are: rewriting them would take a force push to `main`.
+- **In both tests the rejected push still uploaded its commit.** GitHub returns `64dc95f` and `7fc58a7` by
+  full SHA (API and commit page, HTTP 200, checked 2026-11-13) although no branch contains them. Here the
+  ruleset stopped the branch from moving, not the upload. Both commits are harmless (an empty commit, and
+  the same files as `078d798`), but anything in a rejected push should be treated as published.
+- **Not tested yet:** anything on the pull request path, because no PR has been opened since the ruleset
+  was created: a merge with green checks, a failing required check, squash-only, the up-to-date
+  requirement. Also not tested: deleting `main` (if the rule were missing, the test would delete the
+  branch).
+
+Scorecard's Branch-Protection score will be measured again with the other checks at the end of the phase.
