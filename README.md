@@ -30,6 +30,7 @@ Use `./mvnw` on Linux/macOS/Git Bash and `.\mvnw.cmd` on Windows.
 ```bash
 # Tests
 ./mvnw verify            # Windows: .\mvnw.cmd verify
+python -m pip install --require-hashes -r tests/requirements.txt
 python -m pytest tests
 
 # Hardened image (builds the JAR inside Docker), run locked down

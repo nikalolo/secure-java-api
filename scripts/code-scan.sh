@@ -179,7 +179,7 @@ jq -r '[.Results[]? | .Target as $t | .Secrets[]? | "\(.Severity)  \(.RuleID)  \
   | "secrets: \(length)", .[]' "$OUT/trivy-fs.json"
 
 echo "== repo (pom.xml) vs $JAR"
-"$PY" scripts/trivy_report.py --diff --title "Repo (pom.xml) vs app.jar" --top 0 \
+"$PY" scripts/trivy_report.py --diff --title "Repo (pom.xml + tests/requirements.txt) vs app.jar" --top 0 \
   "repo=$OUT/trivy-fs.json" "jar=$OUT/trivy-jar.json" > "$OUT/trivy-compare.md"
 sed -n '/^## Repo/,/^## Trivy/p' "$OUT/trivy-compare.md" | sed '$d'
 echo "full report: $OUT/trivy-compare.md"

@@ -29,8 +29,9 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.12"
-      # Pinned so a new pytest release can't change results unexpectedly.
+      # Every package is pinned by hash, wheels only (no setup.py runs).
       - name: Install pytest
-        run: python -m pip install pytest==9.2.0
+        run: |
+          python -m pip install --require-hashes --only-binary :all: -r tests/requirements.txt
       - name: Test scripts/
         run: python -m pytest -q tests
