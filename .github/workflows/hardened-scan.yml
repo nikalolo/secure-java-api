@@ -29,7 +29,7 @@ jobs:
 
       # The baseline Dockerfile copies a JAR built on the runner.
       - name: Build JAR for baseline image
-        run: mvn -B -ntp package -DskipTests
+        run: ./mvnw -B -ntp package -DskipTests
 
       - name: Build baseline image
         run: docker build -t "$BASELINE" -f Dockerfile .

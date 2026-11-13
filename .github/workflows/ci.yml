@@ -20,7 +20,7 @@ jobs:
           cache: maven
       # "verify" compiles, runs the JUnit tests and packages the JAR.
       - name: Build and test
-        run: mvn -B -ntp verify
+        run: ./mvnw -B -ntp verify
 
   script-tests:
     runs-on: ubuntu-24.04

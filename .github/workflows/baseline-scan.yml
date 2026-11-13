@@ -28,7 +28,7 @@ jobs:
           cache: maven
 
       - name: Build JAR
-        run: mvn -B -ntp package -DskipTests
+        run: ./mvnw -B -ntp package -DskipTests
 
       - name: Build Docker image
         run: docker build -t "$IMAGE" .
