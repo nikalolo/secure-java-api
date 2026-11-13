@@ -11,7 +11,7 @@
 # 2022-04-28), i.e. the last build `17` could have pointed to. It is still
 # deprecated, unpatched, root and full JDK: this is NOT hardening, just keeping
 # the "before" image buildable. See docs/baseline-scan.md.
-FROM openjdk:17.0.2
+FROM openjdk:17.0.2@sha256:528707081fdb9562eb819128a9f85ae7fe000e2fbaeaf9f87662e7b3f38cb7d8
 
 # Copy the JAR that Maven built (target/app.jar) into the image.
 COPY target/app.jar /app.jar
