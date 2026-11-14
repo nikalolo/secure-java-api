@@ -10,27 +10,28 @@ permissions:
 
 jobs:
   java-tests:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-java@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
           distribution: temurin
           java-version: "17"
           cache: maven
       # "verify" compiles, runs the JUnit tests and packages the JAR.
       - name: Build and test
-        run: mvn -B -ntp verify
+        run: ./mvnw -B -ntp verify
 
   script-tests:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.12"
-      # Pinned so a new pytest release can't change results unexpectedly.
+      # Every package is pinned by hash, wheels only (no setup.py runs).
       - name: Install pytest
-        run: python -m pip install pytest==9.2.0
+        run: |
+          python -m pip install --require-hashes --only-binary :all: -r tests/requirements.txt
       - name: Test scripts/
         run: python -m pytest -q tests

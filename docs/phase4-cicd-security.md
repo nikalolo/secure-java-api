@@ -135,3 +135,158 @@ The Windows build of Scorecard v5.6.0, run on the same commit, reported "no work
 Dangerous-Workflow and "No tokens found" for Token-Permissions, listed only the 3 Dockerfile images under
 Pinned-Dependencies, and scored 2.3. The repo has 4 workflows. The Linux binary found all of them, so the
 numbers above come from the Linux run.
+
+## Step 1: protect main
+
+Done on 2026-11-12. The ruleset was created by hand in the repository settings. The values below were read
+back from the GitHub API on 2026-11-13. Times are UTC.
+
+### Ruleset `protect-main`
+
+Active, targets the default branch, created 2026-11-12 16:32:11. There is no classic branch protection
+next to it.
+
+| Rule | Setting |
+|---|---|
+| Bypass list | empty; the API reports `current_user_can_bypass: never`, so the owner goes through a PR too |
+| Restrict deletions | on |
+| Block force pushes | on |
+| Require linear history | on |
+| Require a pull request before merging | on, 0 required approvals |
+| Allowed merge methods | squash only |
+| Conversations must be resolved before merging | on |
+| Dismiss stale approvals, code owner review, approval of the last push | off |
+| `require_extra_approval_for_unattributed_changes` | on (one more required review for pull requests that are not attributed to a person) |
+| Require status checks to pass | `java-tests`, `script-tests`, `scan`, all three from GitHub Actions |
+| Branch must be up to date before merging | on |
+| Do not require status checks on creation | off |
+
+Two choices that differ from the usual advice:
+
+- **0 required approvals.** GitHub does not let the author approve their own pull request. In a one-person
+  repo with an empty bypass list, a required approval would block every merge.
+- **3 required checks, not 5.** `build-and-scan` and `compare` do not run on pull requests (see "Check names
+  on main"). A required check that never reports stays pending, so requiring them would block every PR.
+
+The repository settings still allow merge commits and rebase merges. On `main` the ruleset narrows that to
+squash.
+
+### Tests
+
+| # | When | Test | Result |
+|---|---|---|---|
+| 1 | 16:25 | Direct push of the 3 baseline commits to `main` | **Accepted** (`748436f..078d798`). The ruleset did not exist yet |
+| 2 | 16:32:57 | Direct push of a new, empty commit (`64dc95f`) to `main` | Rejected (GH013 in the terminal). Failed rules: `pull_request` "Changes must be made through a pull request." and `required_status_checks` "3 of 3 required status checks are expected." |
+| 3 | 16:33:49 | Force push of a rewritten tip (`7fc58a7`, an amended copy of `078d798`) to `main` | Rejected (GH013 in the terminal). Failed rules: `non_fast_forward` "Cannot force-push to this branch", plus the same two as in test 2 |
+
+The times and rule results of tests 2 and 3 come from GitHub's own record of the two pushes (rule suites
+`5076113158` and `5076134590`, read from the API on 2026-11-13). In test 2 `non_fast_forward` is listed as
+passed, in test 3 as failed, so the force-push rule fired on its own and not only the pull request rule.
+
+After tests 2 and 3, `main` on GitHub was still at `078d798`, and the repository's activity log shows the
+16:25 push as the last change to `main` (checked 2026-11-13).
+
+What the tests show, and what they do not:
+
+- **Test 1 ran 7 minutes before the ruleset existed, so it says nothing about the ruleset.** It is also how
+  the three baseline commits (`9115e11`, `d2678e6`, `078d798`) reached `main`: by direct push, without a
+  pull request. The 4 workflows ran on that push and passed, but after the fact, not as a gate. The commits
+  stay as they are: rewriting them would take a force push to `main`.
+- **In both tests the rejected push still uploaded its commit.** GitHub returns `64dc95f` and `7fc58a7` by
+  full SHA (API and commit page, HTTP 200, checked 2026-11-13) although no branch contains them. Here the
+  ruleset stopped the branch from moving, not the upload. Both commits are harmless (an empty commit, and
+  the same files as `078d798`), but anything in a rejected push should be treated as published.
+- **Not tested yet:** anything on the pull request path, because no PR has been opened since the ruleset
+  was created: a merge with green checks, a failing required check, squash-only, the up-to-date
+  requirement. Also not tested: deleting `main` (if the rule were missing, the test would delete the
+  branch).
+
+Scorecard's Branch-Protection score will be measured again with the other checks at the end of the phase.
+
+## Step 2: pin everything
+
+Changed on 2026-11-13 on the branch `phase4/step1-2`. The numbers below are local runs on that branch.
+CI runs and the Scorecard score will be added after the merge.
+
+### What is pinned
+
+SHAs were read with `git ls-remote --tags`, digests with `docker buildx imagetools inspect`, both on
+2026-11-13. Image digests are index digests, so they cover every platform of the tag.
+
+| What | Before | After |
+|---|---|---|
+| `actions/checkout` (5 uses) | `@v5` | `fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09` (v5.1.0) |
+| `actions/setup-java` (4) | `@v5` | `b6effb05e454b25005698d916606bdc6ffcbf961` (v5.7.0) |
+| `actions/setup-python` (1) | `@v6` | `ece7cb06caefa5fff74198d8649806c4678c61a1` (v6.3.0) |
+| `actions/upload-artifact` (3) | `@v4` (targets Node 20) | `cf430e030ddbb5b0abf93d22962f4752f3646cd9` (v7.0.2, Node 24) |
+| Trivy in `baseline-scan.yml`, `hardened-scan.yml` | `aquasec/trivy:latest` | `aquasec/trivy:0.76.2@sha256:8f6bb947...` |
+| `Dockerfile` | `openjdk:17.0.2` | `...@sha256:52870708...` |
+| `Dockerfile.hardened`, build stage | `maven:3.9-eclipse-temurin-17` | `...@sha256:1a352420...` |
+| `Dockerfile.hardened`, runtime stage | `eclipse-temurin:17-jre` | `...@sha256:0b652128...` |
+| Runner | `ubuntu-latest` | `ubuntu-24.04` |
+| Maven in CI | `mvn` from the runner | `./mvnw` (Maven 3.9.16, SHA-256 in `maven-wrapper.properties`) |
+| pytest in CI | `pip install pytest==9.2.0` | `pip install --require-hashes --only-binary :all: -r tests/requirements.txt` |
+
+- **Only one action version changed.** For checkout, setup-java and setup-python the SHA is the commit the old
+  tag pointed to on 2026-11-13, so the same code runs as before. `upload-artifact` moved from v4 to v7.0.2
+  because v4 targets the deprecated Node 20 (the runner already forces it onto Node 24 and prints a
+  warning). Newer majors of the other three are left for the update PRs planned in step 3.
+- **The Maven version changed in three workflows.** `ci.yml`, `baseline-scan.yml` and `hardened-scan.yml`
+  used the runner's Maven (3.10.0 on the `ubuntu-24.04` image 20261111.370). They now use the wrapper's
+  3.9.16, as `code-scan.yml` already did.
+- **Trivy did not change.** On 2026-11-13 `aquasec/trivy:latest` resolved to the same digest as
+  `0.76.2`, the one `scripts/code-scan.sh` already pins and that passed `cosign verify` in Phase 3.
+- **The baseline `Dockerfile` is pinned too, and stays naive.** `openjdk:17` already disappeared from
+  Docker Hub once. The digest keeps the "before" image reproducible. It is still the same deprecated,
+  unpatched image running as root.
+- **`tests/requirements.txt`** is generated from `tests/requirements.in` with
+  `uv pip compile --universal --python-version 3.12 --generate-hashes`: 6 packages, 12 hashes. Because of
+  its name, the existing `trivy fs` scan now covers these packages too (6 packages, 0 findings), so the
+  comparison table is now titled "Repo (pom.xml + tests/requirements.txt) vs app.jar".
+
+### Before and after (local)
+
+| Metric | Before | After |
+|---|---|---|
+| zizmor regular | 17 | 4 (`unpinned-uses` 13 to 0; `artipacked` 4 planned for step 5) |
+| zizmor pedantic | 26 | 13 |
+| Semgrep findings | 17 | 1 (`missing-user-entrypoint`, `Dockerfile:23`) |
+| Semgrep `github-actions-mutable-action-tag` | 13 | 0 |
+| Custom rule, Docker image without `@sha256` | 3 | 0 |
+| Actions referenced by tag | 13 of 13 | 0 of 13 |
+| `FROM` lines without a digest | 3 of 3 | 0 of 3 |
+| Workflows calling `mvn` | 3 of 4 | 0 of 4 |
+| Jobs on `ubuntu-latest` | 5 of 5 | 0 of 5 |
+
+zizmor 1.32.0 gave the same numbers offline and online and read all 4 workflows. Semgrep 1.184.0: 6 of 6
+canaries fired, 0 errors, 32 files scanned (30 plus the two requirements files).
+
+Other local checks on 2026-11-13:
+
+- `./mvnw -B -ntp verify`: 3 tests, 0 failures.
+- Fresh virtual environment, the install command above, then pytest: 11 passed. With one hash changed, pip
+  refused to install ("THESE PACKAGES DO NOT MATCH THE HASHES FROM THE REQUIREMENTS FILE").
+- Both images build from the pinned Dockerfiles. The hardened container, started with the locked-down
+  flags, answered `/health` with `{"status":"UP"}`, ran as UID 10001 and refused a write to `/` as root.
+- actionlint 1.7.12 (without ShellCheck): no issues. Checkov 3.4.0: GitHub Actions 172 passed, 0 failed;
+  Dockerfiles 62 passed, 2 failed, both on the baseline `Dockerfile` (`CKV_DOCKER_2`, `CKV_DOCKER_3`).
+- Trivy 0.76.2 on `pom.xml`, `tests/requirements.txt` and `app.jar`: 0 findings, secrets 0 (vulnerability
+  DB of 2026-11-10, updates frozen).
+
+### What pinning does not cover
+
+- **Three scanner images are not updated automatically.** Dependabot does not read image references held
+  in a workflow `env:` value or in a shell script. That is the Trivy digest (`baseline-scan.yml`,
+  `hardened-scan.yml`, `scripts/code-scan.sh`), the Semgrep digest (`scripts/code-scan.sh`) and the gitleaks
+  digest (`scripts/history-scan.sh`). For now they are checked by hand: last checked 2026-11-13 (Trivy
+  0.76.2 and gitleaks v8.30.1 are the latest releases; Semgrep is at 1.184.0, 1.185.0 exists). The Trivy
+  digest must be the same in all three files.
+- **The runner label** is not updated by Dependabot. `ubuntu-24.04` is what `ubuntu-latest` resolved to in
+  the last run on `main` (2026-11-12), so the pin keeps the same image family. Moving to a newer image is a
+  manual edit.
+- **The Maven download is usually not re-checked in CI.** `setup-java` caches the wrapper's Maven
+  distribution, and the wrapper checks the SHA-256 only when it downloads. CI trusts the Actions cache here.
+- **Not pinned by hash:** Semgrep registry rule packs (fetched at scan time), the Trivy databases, Maven
+  dependencies (fixed by version), the JDK that `setup-java` installs, and the Python patch version
+  (`python-version: "3.12"`).
+- **A pinned base image stops receiving patches** until its digest is updated. Step 3 is planned to add the update PRs.

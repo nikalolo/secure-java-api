@@ -30,6 +30,7 @@ Use `./mvnw` on Linux/macOS/Git Bash and `.\mvnw.cmd` on Windows.
 ```bash
 # Tests
 ./mvnw verify            # Windows: .\mvnw.cmd verify
+python -m pip install --require-hashes -r tests/requirements.txt
 python -m pytest tests
 
 # Hardened image (builds the JAR inside Docker), run locked down
@@ -54,7 +55,7 @@ scripts/history-scan.sh
 
 | Workflow | What it does |
 |---|---|
-| `ci.yml` | Java tests (`mvn verify`) and script tests (pytest) on every push/PR |
+| `ci.yml` | Java tests (`./mvnw verify`) and script tests (pytest) on every push/PR |
 | `baseline-scan.yml` | Builds the naive image, smoke-tests it, Trivy-scans it |
 | `hardened-scan.yml` | Builds both images, runs the hardened one locked down, asserts non-root and read-only FS, compares Trivy results |
 | `code-scan.yml` | Runs `scripts/code-scan.sh` (Semgrep, Trivy on pom and JAR, secrets) with canary checks, on push to main and every PR |

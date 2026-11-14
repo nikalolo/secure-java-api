@@ -12,16 +12,18 @@ permissions:
 
 jobs:
   compare:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       BASELINE: secure-java-api:baseline
       HARDENED: secure-java-api:hardened
+      # same digest as scripts/code-scan.sh; not updated by dependabot
+      TRIVY_IMAGE: aquasec/trivy:0.76.2@sha256:8f6bb947dbc528902e11f2f5be52f7b519f6a39d5d148f41166f2040499768fb
     steps:
       - name: Check out code
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       - name: Set up Java 17
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
           distribution: temurin
           java-version: "17"
@@ -29,7 +31,7 @@ jobs:
 
       # The baseline Dockerfile copies a JAR built on the runner.
       - name: Build JAR for baseline image
-        run: mvn -B -ntp package -DskipTests
+        run: ./mvnw -B -ntp package -DskipTests
 
       - name: Build baseline image
         run: docker build -t "$BASELINE" -f Dockerfile .
@@ -74,7 +76,6 @@ jobs:
           fi
           echo "Write to / as root correctly refused"
 
-      # Known shortcut: ":latest" is not pinned (Phase 4).
       - name: Trivy scan both images
         run: |
           mkdir -p trivy-out
@@ -84,7 +85,7 @@ jobs:
               -v /var/run/docker.sock:/var/run/docker.sock \
               -v "$PWD/trivy-out:/out" \
               -v trivy-cache:/root/.cache/trivy \
-              aquasec/trivy:latest image \
+              "$TRIVY_IMAGE" image \
                 --format json --output "/out/$name.json" \
                 --exit-code 0 "$image"
           done
@@ -107,7 +108,7 @@ jobs:
 
       - name: Upload results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: trivy-comparison
           path: trivy-out/

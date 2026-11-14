@@ -3,7 +3,7 @@
 
 # ---- Stage 1: build -------------------------------------------------------
 # Full JDK + Maven exist only in this stage; none of it ships in the final image.
-FROM maven:3.9-eclipse-temurin-17 AS build
+FROM maven:3.9-eclipse-temurin-17@sha256:1a352420f7aba21f5ad08df31bab55f74c013fb491f1ae8ab1dd7ff9ed698584 AS build
 WORKDIR /src
 
 # Copy pom.xml alone first: dependency downloads are cached as a layer and
@@ -16,8 +16,8 @@ RUN mvn -B -ntp package -DskipTests
 
 # ---- Stage 2: runtime -----------------------------------------------------
 # Maintained Eclipse Temurin JRE (no compiler, no Maven) instead of the
-# deprecated openjdk image. Tag pinning by digest is a Phase 4 task.
-FROM eclipse-temurin:17-jre
+# deprecated openjdk image. Pinned by digest; the tag is kept for readability.
+FROM eclipse-temurin:17-jre@sha256:0b6521287f850ec1c4b31c9074c5a1ae1d67c5922c3fefd21065c7c32e244d4a
 
 # Dedicated unprivileged user with a fixed numeric UID/GID, no home, no shell.
 # A numeric UID lets Kubernetes enforce runAsNonRoot.
