@@ -199,14 +199,15 @@ What the tests show, and what they do not:
 - **Not tested yet:** anything on the pull request path, because no PR has been opened since the ruleset
   was created: a merge with green checks, a failing required check, squash-only, the up-to-date
   requirement. Also not tested: deleting `main` (if the rule were missing, the test would delete the
-  branch).
+  branch). Update 2026-11-14: a merge with green checks and a failing required check have now been
+  seen on real PRs, see "CI results" and "Red test" in step 2.
 
 Scorecard's Branch-Protection score will be measured again with the other checks at the end of the phase.
 
 ## Step 2: pin everything
 
 Changed on 2026-11-13 on the branch `phase4/step1-2`. The numbers below are local runs on that branch.
-CI runs and the Scorecard score will be added after the merge.
+The CI runs, the red test and the Scorecard result from 2026-11-14 follow further down.
 
 ### What is pinned
 
@@ -272,6 +273,103 @@ Other local checks on 2026-11-13:
   Dockerfiles 62 passed, 2 failed, both on the baseline `Dockerfile` (`CKV_DOCKER_2`, `CKV_DOCKER_3`).
 - Trivy 0.76.2 on `pom.xml`, `tests/requirements.txt` and `app.jar`: 0 findings, secrets 0 (vulnerability
   DB of 2026-11-10, updates frozen).
+
+### CI results (2026-11-14)
+
+PR #5 was the first pull request through the `protect-main` ruleset. It was squash-merged on 2026-11-14
+as `8a27800` with all three required checks green.
+
+| Workflow | Run on the PR head `f9c9079` | Run on `main` @ `8a27800` |
+|---|---|---|
+| CI (`java-tests`, `script-tests`) | 43584205256 | 43586264299 |
+| Code scan (`scan`) | 43584205218 | 43586264267 |
+| Baseline image scan | 43584204779 (dispatched on the branch) | 43586264252 |
+| Hardened image scan | 43584218183 (dispatched on the branch) | 43586264310 |
+
+All eight runs succeeded. Details below are from the logs and artifacts of these runs.
+
+- **Hashed install on Linux.** `script-tests` ran on Python 3.12.16 and installed 5 wheels (iniconfig,
+  packaging, pluggy, pygments, pytest 9.2.0) with `--require-hashes --only-binary :all:`, then 11 tests
+  passed. The sixth package in `tests/requirements.txt`, colorama, is marked Windows-only, and pip printed
+  `Ignoring colorama: markers 'sys_platform == "win32"' don't match your environment`.
+- **Maven wrapper.** `java-tests` ran 3 tests with 0 failures through `./mvnw`. The log shows a cache hit
+  for the wrapper's Maven distribution, which is the case described under "What pinning does not cover".
+- **`upload-artifact` v7.0.2.** The three artifacts (`code-scan`, `trivy-baseline`, `trivy-comparison`)
+  hold 13 files, the same file names as the artifacts of the last run with v4 (`main` @ `078d798`).
+  On `078d798` the three uploading jobs carried the annotation "Node.js 20 is deprecated", and all five
+  jobs carried the notice that `ubuntu-latest` will migrate to Ubuntu 26. All five jobs on the PR head
+  have 0 annotations.
+- **Code scan.** Semgrep 1.184.0: 1 finding outside the canary (`missing-user-entrypoint`, `Dockerfile:23`),
+  6 of 6 canaries, 0 errors, 32 files. Trivy 0.76.2: repo 0, `app.jar` 0, secrets 0 (vulnerability DB
+  updated 2026-11-14T07:01Z). Same as the local run.
+
+Image scans, compared with the last run before the pins (`main` @ `078d798`, 2026-11-12, images pulled
+by tag):
+
+| Image | 2026-11-12, by tag | 2026-11-14, by digest |
+|---|---|---|
+| Baseline, total | 381 | 381 |
+| Baseline, C / H / M / L / UNKNOWN | 0 / 127 / 234 / 20 / 0 | 0 / 126 / 235 / 20 / 0 |
+| Hardened, total | 35 | 61 |
+| Hardened, C / H / M / L / UNKNOWN | 0 / 0 / 30 / 4 / 1 | 0 / 0 / 56 / 4 / 1 |
+
+- **The pins did not change the base images.** The base image layers recorded in the Trivy reports are
+  identical in both runs (3 of 3 for `openjdk:17.0.2`, 6 of 6 for `eclipse-temurin:17-jre`). Every
+  difference in the table comes from the vulnerability database, which each run downloads fresh.
+- **Baseline:** the same 381 findings. One, CVE-2026-33416 in `libpng`, was re-rated from HIGH to MEDIUM.
+- **Hardened:** 26 new MEDIUM findings and none removed. 24 are 6 glibc CVEs, each reported on 4 packages
+  (`libc6`, `libc-bin`, `libc-gconv-modules-extra`, `locales` at 2.43-2ubuntu2.4, fixed in
+  2.43-2ubuntu2.7). 2 are CVE-2026-121876 in `libsystemd0` and `libudev1`, published 2026-11-12, with no
+  fixed version yet. 26 of the 61 findings now have a fix available.
+- **Java findings: 0 in both images.** The single UNKNOWN is in a Go binary that ships in the base image.
+- The PR-head runs and the runs on `main` report the same findings for both images.
+
+The runtime base image is behind on glibc fixes, but the pin has not caused that yet: on 2026-11-14 the
+tag `eclipse-temurin:17-jre` still resolved to the pinned digest, so a build by tag would get the same
+image. Once upstream rebuilds, the pin will hold the old image until the digest is updated, which is the
+last point of "What pinning does not cover". Nothing fails on severity yet (step 4), and the update PRs
+are planned for step 3.
+
+### Red test: the SHA pinning setting
+
+After the merge, the repository setting "Require actions to be pinned to a full-length commit SHA" was
+turned on (2026-11-14; the API reports `sha_pinning_required: true`). To prove that it enforces, PR #6
+changed one line on a throwaway branch: the checkout in the `script-tests` job of `ci.yml` went back to
+`actions/checkout@v5`.
+
+- **CI run 43587570486 failed.** `script-tests` stopped in "Set up job", before any step ran, with:
+  `The action actions/checkout@v5 is not allowed in nikalolo/secure-java-api because all actions must be
+  pinned to a full-length commit SHA.`
+- **The check is per job.** `java-tests` in the same workflow file, still pinned, ran and passed.
+- **The merge was blocked.** `script-tests` is a required check, and GitHub reported the PR's merge state
+  as `BLOCKED`.
+- **Semgrep saw it too.** The Code scan run on that PR (43587570482) stayed green, because the scan only
+  reports until step 4, but it listed 2 findings instead of 1: the new one is
+  `github-actions-mutable-action-tag` at `.github/workflows/ci.yml:28`.
+
+PR #6 was closed without merging and the branch was deleted.
+
+### Scorecard after steps 1 and 2
+
+Scorecard v5.6.0 again (release binary downloaded again and checked against `scorecard_checksums.txt`,
+Linux), run on 2026-11-14 against `main`
+@ `8a27800`. Overall score: 3.8 to 4.6. Two checks changed:
+
+| Check | Baseline (2026-11-12) | Now | Scorecard's reason |
+|---|---|---|---|
+| Pinned-Dependencies | 0 | 10 | 13 of 13 actions, 3 of 3 container images, 1 of 1 pip command pinned |
+| Branch-Protection | 0 | 4 | "branch protection is not maximal" |
+
+- **Branch-Protection stops at 4 by design.** Scorecard credits the PR requirement, the status checks, the
+  up-to-date rule, blocked force pushes and deletion, and that the rules apply to administrators. Its
+  warnings are all about reviews: no required approvers, no stale review dismissal, no code owner
+  review, no last-push approval. A repo with one maintainer cannot approve its own PRs, so required
+  approvals were left out on purpose.
+- **Unchanged at 10:** Binary-Artifacts, CI-Tests (5 of 5 merged PRs), Dangerous-Workflow,
+  Token-Permissions, Vulnerabilities.
+- **Unchanged at 0:** Dependency-Update-Tool (step 3), SAST (0 of 8 commits), Code-Review (0 of 25
+  changesets), License, Security-Policy, Maintained, CII-Best-Practices, Contributors, Fuzzing.
+  Packaging and Signed-Releases are still not scored.
 
 ### What pinning does not cover
 
