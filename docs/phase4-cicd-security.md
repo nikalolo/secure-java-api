@@ -406,7 +406,7 @@ updates.
 |---|---|---|---|---|
 | `github-actions` | `/` | 13 `uses:` of 4 actions in 4 workflow files | `actions`, minor and patch only | - |
 | `maven` | `/` | `pom.xml` (the Spring Boot parent) and, per the source, `.mvn/wrapper/maven-wrapper.properties` (Maven 3.9.16, wrapper 3.3.4) | none | major versions of Spring Boot and of Maven itself |
-| `docker` | `/` | `Dockerfile`, `Dockerfile.hardened` (3 images) | `base-images` | `openjdk` completely; major versions of `eclipse-temurin` and `maven` |
+| `docker` | `/` | `Dockerfile`, `Dockerfile.hardened` (3 images) | `base-images` | `openjdk` completely; major versions of `eclipse-temurin`; every `maven` tag above the current one (see "Finding: the JDK hides in the tag") |
 | `uv` | `/tests` | `requirements.in`, `requirements.txt` (6 packages) | `test-tools` | - |
 
 - **Majors of actions should arrive one per PR.** A major version of an action can change its behaviour,
@@ -440,9 +440,10 @@ this has been seen on a real pull request yet.
   Until a digest-only PR has been seen, the two digests in `Dockerfile.hardened` are checked by hand
   like the scanner images. Last checked 2026-11-14: `eclipse-temurin:17-jre` still resolved to the
   pinned digest.
-- **Ignore rules filter tags, not digests.** In the source, the `openjdk` ignore is applied to candidate
-  tags only. The `17.0.2` tag is not expected to be rebuilt (not verified), but the rule is: a Dependabot
-  PR that touches `Dockerfile` is closed, not merged.
+- **Ignore rules filter tags, not digests.** In the source, ignore rules with versions are applied to
+  candidate tags only; an ignore without versions, like the one for `openjdk`, drops the dependency
+  before the check (seen in the first run, below). The `17.0.2` tag is not expected to be rebuilt (not
+  verified), but the rule is: a Dependabot PR that touches `Dockerfile` is closed, not merged.
 - **A Maven wrapper update would replace a verified checksum.** If Dependabot updates
   `maven-wrapper.properties`, it writes the SHA-256 of its own download. The current value was derived
   from a download checked against Apache's `.sha512`. Before such a PR is merged, the sum is checked
@@ -478,3 +479,88 @@ checks below are the ones that can fail.
   7 days must not propose it.
 - The dependency graph lists `tomcat-embed-core` 11.0.27 and `pytest` 9.2.0.
 - Scorecard's Dependency-Update-Tool is measured again. It is a metric, not proof that updates work.
+
+### First run (2026-11-15)
+
+The file was merged on 2026-11-15 as `82fd46e` (PR #8). Dependabot's first jobs started at 10:53 UTC,
+one per ecosystem, and all four succeeded. Requiring SHA-pinned actions did not get in their way.
+
+| Ecosystem | Job log | Result |
+|---|---|---|
+| `github-actions` | checked the 4 actions; `upload-artifact` 7.0.2 is the latest | PR #10 checkout 5.1.0 to 7.0.1, PR #11 setup-python 6.3.0 to 7.1.0, PR #13 setup-java 5.7.0 to 6.2.0 |
+| `maven` | checked the parent (4.1.2), two starters and the plugin (no versions of their own), the wrapper (3.3.4, latest) and Maven itself | PR #12 apache-maven 3.9.16 to 3.10.0, in `maven-wrapper.properties` |
+| `docker` | `openjdk`: "All versions of openjdk ignored, no update allowed"; `maven`: see the finding below; `eclipse-temurin 17-jre`: "Skipping tag 17-jre due to cooldown period" | PR #9, closed without merging |
+| `uv` | checked `pytest` 9.2.0 only | no PR |
+
+- **Majors arrived one per PR**, as configured.
+- **The cooldown held, by falling back.** setup-java v6.3.0 was published on 2026-11-14, so Dependabot
+  proposed v6.2.0 ("Found acceptable version outside cooldown: 6.2.0") instead of skipping the update.
+- **The baseline image was skipped completely in this run.** The log shows "All versions of openjdk
+  ignored, no update allowed" and no check of `openjdk`, so its digest was not compared either. The rule
+  that a Dependabot PR touching `Dockerfile` is closed stays.
+- **The runtime image digest was not checked for a refresh.** The `17-jre` tag was pushed again on
+  2026-11-12, inside the 7-day cooldown. This is a second way the digest refresh can be held back,
+  besides the suppression switch under "Limits found in the plan review": a tag pushed again more often
+  than every 7 days never leaves the cooldown. The two digests in `Dockerfile.hardened` stay on the
+  manual check list.
+- **Only direct Python dependencies are checked.** The job looked at `pytest`, not at the 5 packages it
+  pulls in. They are not checked by version updates; they can change when a `pytest` update recompiles
+  the file, or through a security update.
+- **The dependency graph holds the resolved Maven dependencies.** After Dependabot alerts, security
+  updates and "Automatic dependency submission" were turned on (its runs succeed), the dependency graph
+  (checked through the API on 2026-11-15) listed 83 packages, including `tomcat-embed-core` 11.0.27,
+  `jackson-databind` 3.1.7 and `pytest` 9.2.0. Alerts are built from this graph; with 0 open alerts,
+  none has been seen on a transitive dependency yet.
+- The docker log also contains `UNAUTHORIZED` responses from Docker Hub. They are the first step of
+  the anonymous login to the registry, and the job continued and succeeded.
+
+### Finding: the JDK hides in the tag
+
+PR #9 proposed `maven:3.9-eclipse-temurin-17` to `maven:3.9-eclipse-temurin-26`, which changes the
+JDK of the build stage from 17 to 26. The ignore rule "no new major of `maven`" did not stop it.
+
+Why, read from Dependabot's source (`dependabot-core`, `main` @ `13987a8`,
+`docker/lib/dependabot/docker/tag.rb` and `version.rb`):
+
+- For a tag like `3.9-eclipse-temurin-17`, the words are dropped and the numbers kept, so the tag is
+  read as version 3.9.17. The JDK becomes the last number.
+- `3.9-eclipse-temurin-26` is then 3.9.26: a patch update of 3.9.17, not a new major.
+- GitHub's documentation says `ignore` version ranges for Docker use Bundler syntax and that
+  `update-types` assumes `major.minor.patch`. Neither knows that the last number is a JDK.
+
+Why the JDK 26 tag won over the newer Maven 3.10 tags: the job log treated every
+`3.10-eclipse-temurin-N` tag as a pre-release ("The `latest` tag needs to point to
+`3.10-eclipse-temurin-17` for Dependabot to consider it."). On Docker Hub, `maven:latest` had the same
+digest as `3.10.0`, and 3.10.17 is above 3.10.0. As long as `latest` points to a Maven version below
+3.10.17 (today 3.10.0), Dependabot treats these tags as pre-releases and does not propose them.
+
+The fix replaces the `maven` rule with one version range:
+
+```yaml
+      - dependency-name: maven
+        versions: [">= 3.9.17.1"]
+```
+
+- **Every tag above the current one is ignored.** That covers other JDKs on Maven 3.9, all Maven 3.10
+  tags, the shorter `3-eclipse-temurin-N` tags (read as 3.N), and longer tags such as a future
+  `3.9.17-eclipse-temurin-26` (read as 3.9.17.26). The lower bound is 3.9.17.1, not 3.9.18, because of
+  those longer tags.
+- **The current tag can still get digest refreshes.** 3.9.17 is outside the range. In the source, ignore
+  rules only filter candidate tags, and with no candidate left the checker keeps the current tag
+  (`update_checker.rb`, `select_best_candidate`) and then compares its digest. Maven patch releases
+  under the `3.9` tag are expected to arrive this way. Not seen yet: the cooldown and the suppression
+  switch can still hold them back.
+- **Maven minor moves are made by hand.** The move to `3.10-eclipse-temurin-17` will go together with
+  the wrapper update (PR #12), so that CI and the image build use the same Maven. The same pull request
+  will raise the bound to `>= 3.10.17.1`.
+
+A four-range version that would also have allowed `3.10-eclipse-temurin-17` was considered. Because of
+the pre-release rule above, Dependabot would not propose that tag until `latest` moves past 3.10.17, so
+the single range was kept.
+
+How it was checked before the change: a small script that copies Dependabot's tag parsing and ignore
+filter was run over the 548 `maven` tags whose name contains `eclipse-temurin` (Docker Hub API,
+2026-11-15), plus two made-up future tags. With the old rule, 35 tags besides `3.9-eclipse-temurin-17`
+passed the filter. With the new one, only the current tag remains, and both made-up tags are ignored.
+The script does not model the cooldown, the pre-release rule or every precision rule, so the real check
+is the next Dependabot run: it must not propose any `maven` tag.
