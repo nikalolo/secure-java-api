@@ -1,0 +1,77 @@
+version: 2
+
+updates:
+  # 13 uses of 4 actions, all pinned by sha. minor and patch bumps share one pr;
+  # a major changes behaviour, so each one arrives alone.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Tbilisi
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+    commit-message:
+      prefix: ci
+
+  - package-ecosystem: maven
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Tbilisi
+    cooldown:
+      default-days: 7
+    ignore:
+      # a new major of spring boot or maven is a migration, not an update pr.
+      - dependency-name: "org.springframework.boot:*"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "org.apache.maven:apache-maven"
+        update-types: ["version-update:semver-major"]
+    commit-message:
+      prefix: build
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Tbilisi
+    cooldown:
+      default-days: 7
+    ignore:
+      # the baseline image is the "before" evidence and must not move.
+      - dependency-name: openjdk
+      # the app targets java 17; a new major is a decision, not an update.
+      - dependency-name: eclipse-temurin
+        update-types: ["version-update:semver-major"]
+      - dependency-name: maven
+        update-types: ["version-update:semver-major"]
+    groups:
+      base-images:
+        patterns: ["*"]
+    commit-message:
+      prefix: build
+
+  # tests/requirements.txt is compiled by uv with hashes; the uv updater recompiles it.
+  - package-ecosystem: uv
+    directory: /tests
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Tbilisi
+    cooldown:
+      default-days: 7
+    groups:
+      test-tools:
+        patterns: ["*"]
+    commit-message:
+      prefix: build
