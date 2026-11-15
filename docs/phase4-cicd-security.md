@@ -388,3 +388,93 @@ Linux), run on 2026-11-14 against `main`
   dependencies (fixed by version), the JDK that `setup-java` installs, and the Python patch version
   (`python-version: "3.12"`).
 - **A pinned base image stops receiving patches** until its digest is updated. Step 3 is planned to add the update PRs.
+
+## Step 3: Dependabot
+
+Added on 2026-11-15 on the branch `phase4/step3-dependabot`: `.github/dependabot.yml`. This section
+records the configuration and the rules for reviewing its pull requests. Dependabot reads the file from
+the default branch (`main`), so nothing here has run yet. The results of the first run will be added
+after the merge.
+
+### Configuration
+
+All four entries run weekly (Monday 09:00, Asia/Tbilisi) with a cooldown of 7 days: a new release should
+only be proposed once it is 7 days old. The cooldown applies to version updates, not to security
+updates.
+
+| Ecosystem | Directory | Covers | Group | Ignored |
+|---|---|---|---|---|
+| `github-actions` | `/` | 13 `uses:` of 4 actions in 4 workflow files | `actions`, minor and patch only | - |
+| `maven` | `/` | `pom.xml` (the Spring Boot parent) and, per the source, `.mvn/wrapper/maven-wrapper.properties` (Maven 3.9.16, wrapper 3.3.4) | none | major versions of Spring Boot and of Maven itself |
+| `docker` | `/` | `Dockerfile`, `Dockerfile.hardened` (3 images) | `base-images` | `openjdk` completely; major versions of `eclipse-temurin` and `maven` |
+| `uv` | `/tests` | `requirements.in`, `requirements.txt` (6 packages) | `test-tools` | - |
+
+- **Majors of actions should arrive one per PR.** A major version of an action can change its behaviour,
+  so each one should be reviewed, merged or rejected alone. Minor and patch updates should share one PR.
+- **No group for Maven.** At most three versions: the parent in `pom.xml` and the two in the wrapper
+  properties.
+- **The baseline image is excluded.** `Dockerfile` is the "before" evidence, so `openjdk` is ignored.
+- **Java 17 and Maven 3 stay.** A new major of the JDK, of Spring Boot or of Maven is a migration that
+  is planned, not an update PR.
+- **`uv`, not `pip`.** `tests/requirements.txt` is compiled with `uv pip compile`, and the `uv` updater
+  runs `uv pip compile` again with options read from the compiled file.
+
+### What Dependabot is expected to do with the pins
+
+Read from Dependabot's source (`dependabot/dependabot-core`, `main` @ `13987a8`, 2026-11-14). None of
+this has been seen on a real pull request yet.
+
+- **Actions pinned by SHA:** the SHA and the version comment on the same line are rewritten together.
+- **`FROM` lines with a digest:** when a newer tag is chosen, tag and digest are rewritten together.
+  When the tag stays the same, only the digest can be refreshed.
+- **Hashed requirements:** the updater takes `--generate-hashes`, `--universal` and `--python-version`
+  from the compiled file and keeps its header. `--only-binary :all:` is only on the install command in
+  `ci.yml`, not in the compiled file, so the updater resolves without it. If an update had no wheel, the
+  hashed install in `script-tests` would fail on the PR.
+
+### Limits found in the plan review
+
+- **The runtime image can only get digest refreshes.** For `eclipse-temurin:17-jre` the tag is not
+  expected to change (the major is ignored), and the source contains a switch that suppresses
+  digest-only updates for version-like tags. It is not known whether that switch is on for github.com.
+  Until a digest-only PR has been seen, the two digests in `Dockerfile.hardened` are checked by hand
+  like the scanner images. Last checked 2026-11-14: `eclipse-temurin:17-jre` still resolved to the
+  pinned digest.
+- **Ignore rules filter tags, not digests.** In the source, the `openjdk` ignore is applied to candidate
+  tags only. The `17.0.2` tag is not expected to be rebuilt (not verified), but the rule is: a Dependabot
+  PR that touches `Dockerfile` is closed, not merged.
+- **A Maven wrapper update would replace a verified checksum.** If Dependabot updates
+  `maven-wrapper.properties`, it writes the SHA-256 of its own download. The current value was derived
+  from a download checked against Apache's `.sha512`. Before such a PR is merged, the sum is checked
+  against Apache's `.sha512` again and the comment in the file is restored if the update dropped it.
+- **Alerts are expected to miss transitive dependencies.** `pom.xml` declares the parent with a version,
+  and two starters and one plugin without. Tomcat and Jackson, where the earlier findings were, are not
+  declared in it. The repository setting "Automatic dependency submission" will be turned on together
+  with the alerts. Whether it puts the resolved list into the dependency graph for this repo is not
+  verified yet, see below.
+- **Still not updated by Dependabot:** the Trivy, Semgrep and gitleaks image references and the runner
+  label, as listed under "What pinning does not cover".
+
+### Review rules for Dependabot pull requests
+
+- The three required checks must be green, as for any PR.
+- **`actions` and `base-images` PRs:** the Baseline and Hardened image scans are dispatched on the PR
+  branch before merging. Both workflows use the same actions and Dockerfiles but do not run on pull
+  requests.
+- **Actions:** every new SHA is compared with `git ls-remote --tags` for the tag named in the comment
+  (for an annotated tag, the peeled `^{}` line).
+- With the up-to-date rule on `main`, the remaining PRs are rebased with a `@dependabot rebase` comment
+  after each merge.
+
+### How it will be checked after the merge
+
+The pull request that adds the file cannot prove anything: no CI job parses `dependabot.yml`. The
+checks below are the ones that can fail.
+
+- The Dependabot page of the repository shows no configuration error and lists four ecosystems.
+- The log of each first job matches the "Covers" column above.
+- At least one real PR is reviewed with the rules above. On 2026-11-14 newer majors existed for
+  checkout, setup-python and setup-java. setup-java v6.3.0 was published that day, so a PR opened within
+  7 days must not propose it.
+- The dependency graph lists `tomcat-embed-core` 11.0.27 and `pytest` 9.2.0.
+- Scorecard's Dependency-Update-Tool is measured again. It is a metric, not proof that updates work.
