@@ -1,0 +1,6 @@
+# accepted risks for the trivy gates (scripts/code-scan.sh checks this file).
+# each entry: a "# reason:" line, then the id and a review date, for example
+#   # reason: no fixed version yet; remove when the base image is rebuilt
+#   CVE-2026-12345 exp:2026-12-31
+# ids: CVE- or GHSA- only. exp: at most 90 days ahead. once the date passes,
+# trivy reports the finding again and the gate fails until it is decided anew.

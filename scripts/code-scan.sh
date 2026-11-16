@@ -1,9 +1,21 @@
 #!/usr/bin/env bash
 # Code scan: Semgrep (registry packs + custom rules) and Trivy (pom.xml, app.jar,
-# secrets) via Docker. Requires: docker, jq, python, ~/.m2 and a fresh
-# target/app.jar (./mvnw -B -ntp package -DskipTests). Report-only: findings
-# never fail the script, tool errors and a silent canary do.
+# secrets) via Docker. Requires: docker, jq, python, git, ~/.m2 and a fresh
+# target/app.jar (./mvnw -B -ntp package -DskipTests).
+# Exit 10: a security gate failed (trivy CRITICAL/HIGH or a secret in the repo
+# or jar, or a new semgrep ERROR finding). Exit 1: a tool or setup error,
+# including a silent canary. GATE=0 reports findings without gating.
 set -euo pipefail
+
+# 10 is reserved for the gate result at the end; any other failure leaves with 1
+gate_exit=0
+tmp=""
+cleanup() {
+  local rc=$?
+  if [ -n "$tmp" ]; then rm -rf "$tmp"; fi
+  if [ "$rc" -ne 0 ] && [ "$gate_exit" -eq 0 ]; then exit 1; fi
+}
+trap cleanup EXIT
 
 cd "$(dirname "$0")/.."
 
@@ -55,6 +67,46 @@ fi
 M2="$HOME/.m2"
 [ -d "$M2/repository" ] || die "$M2/repository missing; $build_hint"
 M2_MOUNT="$(cygpath -w "$M2" 2>/dev/null || echo "$M2")"
+
+# accepted risks for the trivy gates; every entry needs a reason and a
+# review date, so nothing is waived silently or forever
+IGNOREFILE=.trivyignore
+echo "== $IGNOREFILE lint"
+[ -f "$IGNOREFILE" ] || die "$IGNOREFILE missing (a file with only comments is fine)"
+today=$(date -u +%F)
+max_exp=$(date -u -d "+90 days" +%F)
+entry_re='^(CVE-[0-9]{4}-[0-9]+|GHSA-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}) exp:([0-9]{4}-[0-9]{2}-[0-9]{2})$'
+reason_re='^# reason: [^ ]'
+prev="" n=0 entries=0 lint_failed=0
+while IFS= read -r line || [ -n "$line" ]; do
+  n=$((n + 1))
+  line=${line%$'\r'}
+  case "$line" in "" | "#"*) prev=$line; continue ;; esac
+  entries=$((entries + 1))
+  if [[ ! "$line" =~ $entry_re ]]; then
+    echo "line $n: expected '<CVE-... or GHSA-...> exp:YYYY-MM-DD', got: $line" >&2
+    lint_failed=1
+  else
+    exp=${BASH_REMATCH[2]}
+    if ! date -u -d "$exp" +%F >/dev/null 2>&1; then
+      echo "line $n: $exp is not a valid date" >&2
+      lint_failed=1
+    elif [[ "$exp" > "$max_exp" ]]; then
+      echo "line $n: review date $exp is more than 90 days ahead (max $max_exp)" >&2
+      lint_failed=1
+    elif [[ ! "$exp" > "$today" ]]; then
+      # not a lint error: trivy stops suppressing it, so the gate reports it
+      echo "line $n: review date $exp has passed; the finding counts again"
+    fi
+  fi
+  if [[ ! "$prev" =~ $reason_re ]]; then
+    echo "line $n: needs a '# reason: ...' line directly above" >&2
+    lint_failed=1
+  fi
+  prev=$line
+done < "$IGNOREFILE"
+[ "$lint_failed" -eq 0 ] || die "$IGNOREFILE lint failed"
+echo "entries: $entries"
 
 mkdir -p "$OUT"
 
@@ -136,7 +188,8 @@ trivy() {
     -v "$M2_MOUNT:$container_home/.m2:ro" -w /src \
     "$TRIVY_IMAGE" "$@"
 }
-trivy_flags=(--cache-dir /cache --disable-telemetry --quiet --list-all-pkgs --format json)
+trivy_flags=(--cache-dir /cache --disable-telemetry --quiet --list-all-pkgs --format json
+  --ignorefile "/src/$IGNOREFILE" --show-suppressed)
 
 echo "== trivy fs (pom.xml + secrets)"
 rm -f "$OUT/trivy-fs.json" "$OUT/trivy-jar.json"
@@ -183,3 +236,105 @@ echo "== repo (pom.xml) vs $JAR"
   "repo=$OUT/trivy-fs.json" "jar=$OUT/trivy-jar.json" > "$OUT/trivy-compare.md"
 sed -n '/^## Repo/,/^## Trivy/p' "$OUT/trivy-compare.md" | sed '$d'
 echo "full report: $OUT/trivy-compare.md"
+
+if [ "${GATE:-1}" = 0 ]; then
+  echo "== GATES OFF (GATE=0): findings above are reported only, nothing fails on them"
+  exit 0
+fi
+
+# every gate reads json that is already written, so a red gate is never a
+# network error; all gates run before the one exit at the end
+echo "== gate: trivy (repo + $JAR)"
+trivy_bad=$(jq -s '[.[] | .Results[]?.Vulnerabilities[]?
+  | select(.Severity == "CRITICAL" or .Severity == "HIGH")] | length' \
+  "$OUT/trivy-fs.json" "$OUT/trivy-jar.json")
+jq -r -s '[.[] | .Results[]? | .Target as $t | .Vulnerabilities[]?
+  | select(.Severity == "CRITICAL" or .Severity == "HIGH")
+  | "\(.Severity)  \(.VulnerabilityID)  \(.PkgName) \(.InstalledVersion)  fixed: \(.FixedVersion // "none")  \($t)"]
+  | unique | .[]' "$OUT/trivy-fs.json" "$OUT/trivy-jar.json"
+echo "critical+high: $trivy_bad"
+secrets_found=$(jq '[.Results[]?.Secrets[]?] | length' "$OUT/trivy-fs.json")
+echo "secrets: $secrets_found"
+jq -r -s --arg f "$IGNOREFILE" '[.[] | .Results[]?.ExperimentalModifiedFindings[]?
+  | .Finding.VulnerabilityID // .Finding.RuleID] | unique
+  | "suppressed by \($f): \(length)\(if length > 0 then " (" + join(" ") + ")" else "" end)"' \
+  "$OUT/trivy-fs.json" "$OUT/trivy-jar.json"
+
+echo "== gate: semgrep (ERROR findings new since the base commit)"
+# semgrep --baseline-commit checks out the base, so it needs a writable repo:
+# scan a throwaway clone and keep the real checkout read-only
+head_sha=$(git rev-parse HEAD)
+base=${GATE_BASE:-}
+if [ -z "$base" ]; then
+  if [ "${GITHUB_EVENT_NAME:-}" = pull_request ]; then
+    # the pr checkout is a merge commit; its first parent is the base branch
+    base=$(git rev-parse HEAD^1)
+  else
+    base=$(git merge-base HEAD origin/main) \
+      || die "no base commit: set GATE_BASE or fetch origin/main"
+  fi
+fi
+git cat-file -e "$base^{commit}" 2>/dev/null \
+  || die "base commit $base not found (shallow checkout?)"
+git merge-base --is-ancestor "$base" HEAD \
+  || die "base commit $base is not an ancestor of HEAD"
+semgrep_new=0
+if [ "$(git rev-parse "$base")" = "$head_sha" ]; then
+  echo "base = HEAD ($head_sha): no new commits to check"
+else
+  echo "base $base, head $head_sha (committed changes only)"
+  tmp=$(mktemp -d)
+  # native path for git, jq and docker (git bash: C:/..., linux: unchanged)
+  work="$(cygpath -m "$tmp" 2>/dev/null || echo "$tmp")"
+  clone="$work/repo"
+  git clone -q --no-hardlinks --no-checkout . "$clone"
+  git -C "$clone" -c advice.detachedHead=false checkout -q --detach "$head_sha"
+  rm -f "$OUT/semgrep-gate.json"
+  rc=0
+  docker run --rm ${docker_user[@]+"${docker_user[@]}"} \
+    -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0=/src \
+    -v "$clone:/src" -v "$SRC/$OUT:/out" -w /src \
+    "$SEMGREP_IMAGE" semgrep scan --metrics=off --quiet \
+    --config p/java --config p/owasp-top-ten --config p/github-actions \
+    --config "r/$REQUEST_MAPPING_RULE" --config .semgrep/rules/ \
+    --severity ERROR --exclude .semgrep/canary --disable-nosem \
+    --baseline-commit "$base" --json --output /out/semgrep-gate.json . || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    if [ -s "$OUT/semgrep-gate.json" ]; then
+      jq -r '.errors[]? | "  \(.type // "error"): \(.message // .)"' "$OUT/semgrep-gate.json" >&2
+    fi
+    die "semgrep gate scan failed (exit $rc)"
+  fi
+  # the gate scan has no canary of its own: every changed file that the full
+  # scan covers must also be in the gate's scanned list
+  git diff --name-only "$base" "$head_sha" > "$work/changed.txt"
+  not_scanned=$(jq -rn --rawfile changed "$work/changed.txt" \
+    --rawfile full "$OUT/semgrep-scanned.txt" --slurpfile gate "$OUT/semgrep-gate.json" '
+    def lines: split("\n") | map(sub("\r$"; "")) | map(select(. != ""));
+    ($full | lines) as $f | ($gate[0].paths.scanned // []) as $g
+    | $changed | lines | .[]
+    | select(. as $x | any($f[]; . == $x) and (any($g[]; . == $x) | not))')
+  if [ -n "$not_scanned" ]; then
+    echo "$not_scanned" >&2
+    die "semgrep gate did not scan these changed files"
+  fi
+  semgrep_new=$(jq '.results | length' "$OUT/semgrep-gate.json")
+  jq -r '.results[] | "\(.extra.severity)  \(.check_id)  \(.path):\(.start.line)"' \
+    "$OUT/semgrep-gate.json"
+fi
+echo "new ERROR findings: $semgrep_new"
+
+echo "== gate result"
+failed=()
+[ "$trivy_bad" -eq 0 ] || failed+=("trivy: $trivy_bad CRITICAL/HIGH finding(s) in the repo or $JAR")
+[ "$secrets_found" -eq 0 ] || failed+=("trivy: $secrets_found secret(s) in the repo")
+[ "$semgrep_new" -eq 0 ] || failed+=("semgrep: $semgrep_new new ERROR finding(s)")
+if [ "${#failed[@]}" -gt 0 ]; then
+  for f in "${failed[@]}"; do
+    echo "FAILED   $f" >&2
+    if [ -n "${GITHUB_ACTIONS:-}" ]; then echo "::error title=Security gate::$f"; fi
+  done
+  gate_exit=1
+  exit 10
+fi
+echo "all gates passed"
