@@ -464,8 +464,10 @@ this has been seen on a real pull request yet.
   requests.
 - **Actions:** every new SHA is compared with `git ls-remote --tags` for the tag named in the comment
   (for an annotated tag, the peeled `^{}` line).
-- With the up-to-date rule on `main`, the remaining PRs are rebased with a `@dependabot rebase` comment
-  after each merge.
+- With the up-to-date rule on `main`, the remaining PRs must be brought up to date after each merge.
+  Dependabot did this by itself for PRs #11 and #13. For PR #10 a `@dependabot rebase` comment did
+  nothing, and after a `@dependabot recreate` comment (17:06 UTC on 2026-11-15) Dependabot pushed a new
+  commit at 17:25 UTC.
 
 ### How it will be checked after the merge
 
@@ -563,4 +565,122 @@ filter was run over the 548 `maven` tags whose name contains `eclipse-temurin` (
 2026-11-15), plus two made-up future tags. With the old rule, 35 tags besides `3.9-eclipse-temurin-17`
 passed the filter. With the new one, only the current tag remains, and both made-up tags are ignored.
 The script does not model the cooldown, the pre-release rule or every precision rule, so the real check
-is the next Dependabot run: it must not propose any `maven` tag.
+is the next Dependabot run: it must not propose any `maven` tag. That run is described in the next
+section.
+
+### After the fix
+
+PR #14 was merged on 2026-11-15 as `c4aa762`. The docker job that followed (Dependabot job 1705805515,
+16:23 UTC) opened no pull request; its log ends with "No update needed" for both `maven` and
+`eclipse-temurin`.
+
+- **The range is what stopped the update.** The job received exactly three ignore conditions, all from
+  `.github/dependabot.yml`: the `eclipse-temurin` major rule, `maven` `>= 3.9.17.1`, and `openjdk`
+  `>= 0`. Closing PR #9 did not add an ignore condition of its own.
+- **Two filters ran.** Every `3.10-eclipse-temurin-N` and `3.10.0-eclipse-temurin-N` tag, and every
+  `3-eclipse-temurin-N` tag except `-8` (read as 3.8, below our 3.9.17), was rejected as a pre-release.
+  The `3.9-eclipse-temurin-19` to `-26` tags (3.9.19 to 3.9.26) are not pre-releases (3.9.x is below
+  3.10.0), so only the range could remove them. The log does not list ignored tags one by one; it shows
+  the result, "Latest version is 3.9-eclipse-temurin-17" and "No update needed". Under the old rule the
+  same tags produced PR #9. A `3.9-eclipse-temurin-27` tag does not exist on Docker Hub (list of
+  2026-11-15).
+- **An ignore without versions is sent as `>= 0`.** That is why `openjdk` is logged as "All versions of
+  openjdk ignored" and not checked at all.
+- **The runtime image was held by the cooldown again** ("Skipping tag 17-jre due to cooldown period").
+
+The weekly run on Monday 2026-11-16 (05:40 UTC) opened no pull request. All four jobs succeeded:
+
+- `docker`: `maven` and `eclipse-temurin` unchanged (`openjdk` skipped), `17-jre` still inside the
+  cooldown.
+- `github-actions`: no update for any of the four actions. setup-java v6.3.0 (2026-11-14) is still
+  inside the cooldown, so the job again settled on v6.2.0.
+- `maven`: Maven 3.10.0 is still proposed in PR #12, which is open (see below). Maven 3.10.1 is already
+  published (on Maven Central since 2026-11-11) and was filtered out by the cooldown.
+- `uv`: `pytest` 9.2.0 is current.
+
+### Action updates: PRs #10, #11 and #13
+
+The three major updates from the first run were reviewed with the rules above and merged on 2026-11-15.
+
+| PR | Update | New SHA = tag | Workflows | Merged as |
+|---|---|---|---|---|
+| #10 | `actions/checkout` v5.1.0 to v7.0.1 | `3d3c42e5...` | all 4 (5 uses) | `6e3d5dd` |
+| #11 | `actions/setup-python` v6.3.0 to v7.1.0 | `6d4fd22b...` | `ci.yml` (`script-tests`) | `114f739` |
+| #13 | `actions/setup-java` v5.7.0 to v6.2.0 | `77dd5b2c...` | all 4 | `2e6ae91` |
+
+- **SHA against the tag:** for each PR, `git ls-remote --tags` returned the PR's SHA for the new tag. All
+  three are lightweight tags, so there was no `^{}` line to compare.
+- **Signed and in the action's history:** each commit has a verified signature, and the GitHub compare API
+  showed it as part of the action's `main` branch.
+- **Runtime:** all three actions use `node24`, before and after.
+- **Image scans:** for #10 and #13, Baseline and Hardened were dispatched on the PR branch before the
+  merge (#10 on `fad960c`: runs 43741415709 and 43741425397; #13 on `8434bfb`: runs 43743009297 and
+  43743014465). #11 changes only `ci.yml`, whose jobs ran on the PR.
+- **Image results did not change.** The hardened image had 61 findings (0 C / 0 H / 56 M / 4 L /
+  1 UNKNOWN) and the baseline image 381, before the updates (`c4aa762`), on both PR branches and on `main`
+  after the last merge (`2e6ae91`).
+
+What the release notes changed, and what that means here:
+
+- **checkout v6 and v7.** Since v6, `persist-credentials` stores the token in a separate file under
+  `$RUNNER_TEMP`, not in `.git/config`. Our `code-scan.yml` already sets `persist-credentials: false`;
+  the other four checkouts still keep the token (step 5). v7 refuses to check out fork pull request code
+  for `pull_request_target` and `workflow_run`, triggers we do not use. v5.1.0 itself was released on
+  2026-07-20, the same day as v7.0.1.
+- **setup-python v7.** The internals moved to ESM, and the `pip-install` input was removed. We pass only
+  `python-version` and install with our own hashed `pip install`.
+- **setup-java v6.** The internals moved to ESM, and legacy AdoptOpenJDK distributions were removed (we
+  use `temurin`). JDK downloads now verify checksums, and signature verification is on by default for
+  the distributions that support it. In our runs the JDK (17.0.21+9) came from the runner's tool cache,
+  so no JDK was downloaded and the new download verification had nothing to check.
+
+### Maven Central rate limit (HTTP 429)
+
+The first Baseline run for PR #13 (run 43743009297, attempt 1) failed in "Build JAR": Maven could not
+resolve `spring-boot-starter-parent:pom:4.1.2` ("present, but unavailable") because Maven Central
+answered with status code 429, too many requests. The second attempt passed.
+
+setup-java v6 did not cause it:
+
+- With v5.7.0 and with v6.2.0, the JDK came from the runner's tool cache and the same Maven and wrapper
+  cache keys were restored, so the dependencies were not downloaded again.
+- The Maven builds checked log lines of the form "Artifact ... is present in the local repository, but
+  cached from a remote repository ID that is unavailable in current build context, verifying that is
+  downloadable from [central ...]". The Baseline runs with v5.7.0 (`114f739`) and v6.2.0 (`2e6ae91`) and
+  the Code scan run on `2e6ae91` each logged 874 of them; the CI run on `2e6ae91` logged 904.
+
+So each of these builds made 874 (CI: 904) re-checks against Maven Central, and one of those requests
+was refused. Why the cached artifacts carry a repository ID the build does not know is not found yet. It
+is on the step 5 list, together with the question of whether Maven 3.10's new resolver changes the
+count.
+
+### PR #12: Maven 3.10.0 for the wrapper
+
+PR #12 changes the wrapper's Maven from 3.9.16 to 3.10.0. Its checksum was verified on 2026-11-16:
+
+- The SHA-256 of `apache-maven-3.10.0-bin.zip` downloaded from Maven Central equals the PR's
+  `distributionSha256Sum` (`1f6d9909...`).
+- The zip's SHA-512 equals the `.sha512` file Apache publishes on downloads.apache.org and
+  archive.apache.org, and the one on Maven Central.
+- `gpg --verify` of Apache's `.asc`, with a throwaway keyring imported from Apache Maven's `KEYS` file,
+  reported a good signature from key `88BE34F94BDB2B5357044E2E3A387D43964143E3`. The key is not
+  certified in a web of trust, so this proves the zip was signed by a key Apache publishes, not more.
+
+The PR is not merged as it is. It removes the two comment lines in `maven-wrapper.properties` that say
+where the checksum comes from, and it stores `mvnw.cmd` in the repository with Windows line endings
+(CRLF). Our `.gitattributes` (`*.cmd text eol=crlf`) keeps that file with LF in the repository and
+converts it to CRLF only on checkout. The content of `mvnw.cmd` is otherwise unchanged. The move to
+Maven 3.10 will be its own pull request, planned for 2026-11-19 or later. Because Maven 3.10.1 leaves
+the cooldown on 2026-11-18, the version is chosen on that day, and the checksum and signature checks
+above are repeated for the zip actually used. The pull request changes:
+
+- the wrapper's `distributionUrl` and `distributionSha256Sum`, with both comment lines kept;
+- the build stage of `Dockerfile.hardened` on `maven:3.10-eclipse-temurin-17`, pinned to a digest that
+  is at least 7 days old;
+- the `maven` bound in `dependabot.yml` raised to `>= 3.10.17.1`.
+
+The raised bound carries more weight than the old one. After the move, the current tag reads as 3.10.17,
+which is above `maven:latest` (3.10.0 on 2026-11-15; still above it if `latest` moves to 3.10.1), so
+Dependabot treats our own tag as a pre-release. In that case its source keeps pre-release candidates
+instead of removing them (`remove_prereleases` in `update_checker.rb`), so `3.10-eclipse-temurin-21` and
+similar tags become candidates again. The bound is the only rule meant to stop them.
