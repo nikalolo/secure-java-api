@@ -97,8 +97,8 @@ jobs:
 
       - name: Scan git history for secrets
         env:
-          # all refs; a fresh checkout has no reflog worth reading
-          LOG_OPTS: --all
+          # red test: the trailing space breaks git inside gitleaks (tool error, exit 1). never merge
+          LOG_OPTS: "--all "
         run: |
           mkdir -p scan-out/history
           scripts/history-scan.sh 2>&1 | tee scan-out/history-scan.log
