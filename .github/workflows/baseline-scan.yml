@@ -8,12 +8,20 @@ on:
 
 # Least privilege: this job only needs to read the repo.
 # (Phase 4 covers why the default token permissions are too broad.)
-permissions:
-  contents: read
+permissions: {}
+
+# a new push to a pull request cancels its older run. runs on main get
+# their own group each, so pushes, schedules and dispatches always finish.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
 
 jobs:
   build-and-scan:
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
     env:
       IMAGE: secure-java-api:baseline
       # same digest as scripts/code-scan.sh; not updated by dependabot
@@ -21,6 +29,9 @@ jobs:
     steps:
       - name: Check out code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # the token stays out of .git/config
+          persist-credentials: false
 
       - name: Set up Java 17
         uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
