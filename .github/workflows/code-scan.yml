@@ -13,13 +13,21 @@ on:
     - cron: "23 4 * * *"
   workflow_dispatch:
 
-permissions:
-  contents: read
+# no token rights by default; each job asks for what it needs
+permissions: {}
+
+# a new push to a pull request cancels its older run. runs on main get
+# their own group each, so pushes, schedules and dispatches always finish.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
 
 jobs:
   scan:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    permissions:
+      contents: read
     defaults:
       run:
         # explicit bash adds pipefail; the default "bash -e" has none
@@ -96,6 +104,8 @@ jobs:
   secrets:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    permissions:
+      contents: read
     defaults:
       run:
         shell: bash
