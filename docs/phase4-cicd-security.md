@@ -684,3 +684,134 @@ which is above `maven:latest` (3.10.0 on 2026-11-15; still above it if `latest` 
 Dependabot treats our own tag as a pre-release. In that case its source keeps pre-release candidates
 instead of removing them (`remove_prereleases` in `update_checker.rb`), so `3.10-eclipse-temurin-21` and
 similar tags become candidates again. The bound is the only rule meant to stop them.
+
+## Step 4: security gates
+
+Until this step every scan only reported. Step 4 made findings block merges, in three pull requests,
+each proven with its own red test before the next one started:
+
+| PR | Merged | Gate | Job (required check) |
+|---|---|---|---|
+| #16 | 2026-11-16 as `d3c9fac` | Trivy on the repo and `app.jar`, Semgrep on new code, `.trivyignore` | `scan` (already required) |
+| #19 | 2026-11-16 as `cffd947` | gitleaks over the full git history | `secrets` (new) |
+| #21 | 2026-11-17 as `57e7f87` | Trivy on the hardened image, retries, daily schedules | `compare` (now on pull requests) |
+
+### Exit codes
+
+Every gate script uses the same two exit codes, so a red check says what kind of problem it is:
+
+- **10: a security finding.** Each gate script exits 10 in exactly one place, at the end, after all its
+  checks have run. The job log shows an error annotation titled "Security gate". A run that failed with
+  10 is never rerun to get past it; the finding has to be fixed or accepted.
+- **1: a tool or network error.** Any other failure (a scanner, Docker, git, a build or a download) ends
+  with 1: in the scripts through an exit trap, in the separate build and download steps through the step
+  itself. These runs may be rerun.
+
+The three scripts are `scripts/code-scan.sh` (job `scan`), `scripts/history-scan.sh` (job `secrets`) and
+`scripts/image-gate.sh` (job `compare`).
+
+### The gates
+
+| Gate | Fails on | Does not fail on |
+|---|---|---|
+| Trivy, repo (`pom.xml`, `tests/requirements.txt`) and `app.jar` | any CRITICAL or HIGH finding; any secret Trivy reports in the repository scan | MEDIUM, LOW, UNKNOWN |
+| Semgrep | ERROR findings that are new since the base commit | existing findings, such as `missing-user-entrypoint` at `Dockerfile:23`; WARNING findings |
+| gitleaks | any leak in the full history (`--all`) | |
+| Trivy, hardened image | CRITICAL findings that have a fixed version | HIGH and below; CRITICAL without a fix |
+| Trivy, baseline image | nothing: report-only, it is the "before" evidence | |
+
+- **Base commit for Semgrep.** On a pull request it is the first parent of the merge commit GitHub
+  builds, which is the tip of `main`. On a push to `main` it is the previous `main`. Semgrep needs a
+  writable repository for this, so it runs on a throwaway clone; the real checkout stays read-only.
+  The canary files are left out of this scan, and `# nosemgrep` comments are ignored, so a finding
+  cannot be waived inside the code.
+- **Accepted risks.** The Trivy gates read `.trivyignore`. `code-scan.sh` checks the file before any
+  scan: each entry must be a `CVE-` or `GHSA-` ID with a review date (`exp:`) at most 90 days ahead, and
+  a `# reason:` line directly above it. Once the date passes, Trivy reports the finding again. The file
+  has no entries today.
+- **Before the gitleaks scan**, the script builds a small repository with a fake key and checks that
+  gitleaks finds it and redacts it. On `main` the job's report files are owned by the runner user
+  (UID 1001), which shows the scanner container did not run as root.
+
+### Red tests
+
+Each gate was made to fail on purpose: in this repository with a pull request that was closed without
+merging, and for the fake key in a separate private repository.
+
+| Test | Change | Run | Result |
+|---|---|---|---|
+| PR #17 | `log4j-core` 2.14.1 in `pom.xml` | `scan` 43896648689 | exit 10: CVE-2021-44228 and CVE-2021-45046 (CRITICAL), CVE-2021-45105 (HIGH), each in `pom.xml` and in the JAR; Semgrep gate 0; BLOCKED |
+| PR #18 | `management.endpoints.web.exposure.include=*` in `application.properties` | `scan` 43898710709 | exit 10: exactly one new ERROR, `spring-actuator-fully-enabled` at `application.properties:4`; `Dockerfile:23` not in the gate; Trivy 0; BLOCKED |
+| Private throwaway repository | a fake AWS key in its own commit | `secrets` 43910012093, 43913780930 | first run green; second run exit 10, `aws-access-token` at `config.ini:1` |
+| PR #20 | a trailing space in `LOG_OPTS` | `secrets` 43920595979 | exit 1, a tool error from git; the only red check; BLOCKED once `secrets` was required |
+| PR #22 | `log4j-core` 2.14.1 in `pom.xml` | `compare` 44163890985, `scan` 44163891124 | `compare` exit 10: canary ok, CVE-2021-44228 and CVE-2021-45046 in `app.jar`; `scan` exit 10 as in #17 |
+| PR #23 | the image gate reads a scan file that does not exist | `compare` 44164002985 | exit 1 ("missing"); the only red check; BLOCKED |
+
+- **The fake key test ran in a separate private repository**, because anything pushed to this public
+  repository stays retrievable by its commit SHA. GitHub's push protection did not block the fake key
+  there. The key appears nowhere in the run logs or in any of the three artifact files; the report shows
+  it as `REDACTED`. The repository was deleted afterwards.
+- **PRs #20 and #23 test the ruleset, not the scanner.** A tool error is enough to make the job red, and
+  when that job is the only red check, a BLOCKED pull request shows that the ruleset enforces it.
+- **Local tests** before each pull request covered the cases that are awkward to push: every
+  `.trivyignore` lint error (exit 1), an accepted CVE turning a gate green and an expired one turning it
+  red again, an invalid base commit (exit 1), and `GATE=0`, which reports findings without failing.
+
+### Finding: a new job blocks nothing until it is in the ruleset
+
+`secrets` was merged in PR #19, but a required check is a name in the ruleset, not a property of the
+job. Before `secrets` was added to the ruleset by hand, a red `secrets` run did not block PR #20 (seen
+on the pull request page; GitHub keeps no record of it); after the addition (2026-11-16, 18:11 UTC), the
+same PR showed BLOCKED. `compare` was added the same way on 2026-11-17, after its first green run on
+`main` with the gate (44162204650).
+
+The routine for every new gate job:
+
+1. Merge the job.
+2. Wait for one green run on `main`.
+3. Add the exact job name to the ruleset `protect-main`.
+4. Prove it with a red pull request in which that job is the only red check.
+
+Required checks now: `java-tests`, `script-tests`, `scan`, `secrets`, `compare`. This replaces the three
+listed under step 1, written when `compare` did not yet run on pull requests.
+
+### The image gate's canary, and what "0" means
+
+A scan that never looked inside the application JAR would also report zero findings. Before the image
+gate runs, it checks that the full scan of the hardened image lists `tomcat-embed-core`, a library that
+only our JAR brings. Run against a scan of the bare base image, which has no JAR, the check failed with
+exit 1 (local test, 2026-11-17).
+
+"The gate passed" is not "no findings". On `main` after PR #21 the hardened image still has 61 findings
+(0 CRITICAL, 0 HIGH, 56 MEDIUM, 4 LOW, 1 UNKNOWN), all in the base image. The gate passes because none of
+them is a CRITICAL with a fix. The baseline image has 381 findings and is not gated.
+
+### Why downloads and builds retry
+
+On 2026-11-17 the vulnerability database download failed four times in a row on this PC, each time with
+`context deadline exceeded` from `mirror.gcr.io`, although Trivy also lists `ghcr.io` as a fallback. In
+CI the same failure would stop the image gate. So `compare` downloads both databases in a step of its
+own, with three tries 30 and 60 seconds apart, and every scan after it runs with `--skip-db-update`. The
+JAR builds (`code-scan.yml`, `baseline-scan.yml`, `hardened-scan.yml`) and the image builds retry once
+after 60 seconds, because of the Maven Central 429 seen in step 3; `ci.yml`'s `./mvnw verify` does not,
+so `java-tests` can still turn red on a 429. In `compare`, a red download or build step is an
+infrastructure problem; only a red gate step with exit 10 is a security result. In `scan` and `secrets`
+the scan and the gate share one step, and `scan` downloads the Trivy databases inside it without a retry
+loop, so there the exit code (10 or 1) is what tells them apart.
+
+### Known limits
+
+- **Any pull request can accept its own risk.** A change can add an entry to `.trivyignore` together with
+  the vulnerable dependency. The lint only forces a reason and a review date. In a team, a `CODEOWNERS`
+  entry for `.trivyignore` with required review would close this; with one maintainer, the review date
+  is the only control.
+- **Daily schedules can stop.** `code-scan.yml` (04:23 UTC) and `hardened-scan.yml` (04:37 UTC) now also
+  run every day on `main`, so a newly published CVE that meets a gate turns `main` red without any
+  commit. GitHub disables scheduled workflows in a public repository after 60 days without repository
+  activity. They run on `main` only, and a red scheduled run blocks nothing by itself.
+- **A tool error hides a gate result.** If a gate script fails with 1, the gates that already ran are
+  not reported as a security failure. The rerun shows them.
+- **The Semgrep gate sees committed changes only.** On a scheduled run, base and head are the same commit,
+  so the Semgrep gate has nothing to compare and is skipped; the Trivy gates still run.
+- **Trivy's secret check is a second net.** In a local trial (2026-11-16), Trivy reported no secret in a
+  file holding the same fake AWS key that gitleaks finds. The `secrets` job is the gate for secrets.
