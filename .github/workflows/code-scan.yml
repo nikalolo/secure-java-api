@@ -8,6 +8,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  # new CVEs appear without any commit; check main every day
+  schedule:
+    - cron: "23 4 * * *"
   workflow_dispatch:
 
 permissions:
@@ -37,9 +40,18 @@ jobs:
           java-version: "17"
           cache: maven
 
-      # builds target/app.jar and fills ~/.m2, which trivy fs reads offline
+      # builds target/app.jar and fills ~/.m2, which trivy fs reads offline.
+      # retries once: maven central sometimes answers 429.
       - name: Build JAR
-        run: ./mvnw -B -ntp package -DskipTests
+        run: |
+          for attempt in 1 2; do
+            ./mvnw -B -ntp package -DskipTests && exit 0
+            if [ "$attempt" = 1 ]; then
+              echo "::warning title=Retry::Maven build failed, retrying in 60 s"
+              sleep 60
+            fi
+          done
+          exit 1
 
       - name: Run code scan
         env:
@@ -102,6 +114,16 @@ jobs:
         run: |
           mkdir -p scan-out/history
           scripts/history-scan.sh 2>&1 | tee scan-out/history-scan.log
+
+      # proves the script's linux --user branch ran: a root container would
+      # leave a root-owned report
+      - name: Assert scan output is not root-owned
+        run: |
+          other="$(find scan-out ! -user "$(id -u)")"
+          if [ -n "$other" ]; then
+            echo "not owned by the runner user:"; echo "$other"; exit 1
+          fi
+          ls -ln scan-out/history
 
       - name: Results to job summary
         if: always()
