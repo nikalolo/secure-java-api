@@ -168,7 +168,8 @@ jobs:
       # Only the hardened image is gated; the baseline image is the "before"
       # evidence and stays report-only.
       - name: Hardened image gate (fixable CRITICAL)
-        run: scripts/image-gate.sh "$HARDENED" trivy-out/hardened.json
+        # red test: the gate reads a scan that does not exist (tool error, exit 1). never merge
+        run: scripts/image-gate.sh "$HARDENED" trivy-out/missing.json
 
       - name: Upload results
         if: always()
