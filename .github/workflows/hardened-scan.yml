@@ -2,9 +2,16 @@ name: Hardened image scan
 
 # Builds the baseline and hardened images side by side, proves the hardened
 # one works under a locked-down runtime, and compares their Trivy results.
+# Gate: the hardened image fails on fixable CRITICAL findings (exit 10, do not
+# rerun to get past it); any other failure is a tool or network error.
 on:
   push:
     branches: [main]
+  # no paths filter: a required check skipped by a filter would never report
+  pull_request:
+  # new CVEs appear without any commit; check main every day
+  schedule:
+    - cron: "37 4 * * *"
   workflow_dispatch:
 
 permissions:
@@ -13,6 +20,11 @@ permissions:
 jobs:
   compare:
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        # explicit bash adds pipefail; the default "bash -e" has none
+        shell: bash
     env:
       BASELINE: secure-java-api:baseline
       HARDENED: secure-java-api:hardened
@@ -30,15 +42,40 @@ jobs:
           cache: maven
 
       # The baseline Dockerfile copies a JAR built on the runner.
+      # Builds retry once: Maven Central sometimes answers 429.
       - name: Build JAR for baseline image
-        run: ./mvnw -B -ntp package -DskipTests
+        run: |
+          for attempt in 1 2; do
+            ./mvnw -B -ntp package -DskipTests && exit 0
+            if [ "$attempt" = 1 ]; then
+              echo "::warning title=Retry::Maven build failed, retrying in 60 s"
+              sleep 60
+            fi
+          done
+          exit 1
 
       - name: Build baseline image
-        run: docker build -t "$BASELINE" -f Dockerfile .
+        run: |
+          for attempt in 1 2; do
+            docker build -t "$BASELINE" -f Dockerfile . && exit 0
+            if [ "$attempt" = 1 ]; then
+              echo "::warning title=Retry::baseline image build failed, retrying in 60 s"
+              sleep 60
+            fi
+          done
+          exit 1
 
       # The hardened Dockerfile builds the JAR itself (multi-stage).
       - name: Build hardened image
-        run: docker build -t "$HARDENED" -f Dockerfile.hardened .
+        run: |
+          for attempt in 1 2; do
+            docker build -t "$HARDENED" -f Dockerfile.hardened . && exit 0
+            if [ "$attempt" = 1 ]; then
+              echo "::warning title=Retry::hardened image build failed, retrying in 60 s"
+              sleep 60
+            fi
+          done
+          exit 1
 
       # Runtime hardening: read-only root FS, no Linux capabilities, no
       # privilege escalation, resource limits. Only /tmp is writable
@@ -76,16 +113,38 @@ jobs:
           fi
           echo "Write to / as root correctly refused"
 
+      # Both databases are fetched here, with retries, so the scans and the
+      # gate below never need the network.
+      - name: Download Trivy databases
+        run: |
+          for db in --download-db-only --download-java-db-only; do
+            for attempt in 1 2 3; do
+              docker run --rm -v trivy-cache:/root/.cache/trivy \
+                "$TRIVY_IMAGE" image --disable-telemetry --quiet "$db" && break
+              if [ "$attempt" = 3 ]; then
+                echo "::error title=Trivy DB::$db failed 3 times"
+                exit 1
+              fi
+              echo "::warning title=Retry::trivy $db failed, retrying in $((attempt * 30)) s"
+              sleep $((attempt * 30))
+            done
+          done
+
       - name: Trivy scan both images
         run: |
           mkdir -p trivy-out
           for name in baseline hardened; do
             image="secure-java-api:$name"
+            # the package list lets the gate prove it saw the app's jars
+            extra=()
+            if [ "$name" = hardened ]; then extra=(--list-all-pkgs); fi
             docker run --rm \
               -v /var/run/docker.sock:/var/run/docker.sock \
               -v "$PWD/trivy-out:/out" \
               -v trivy-cache:/root/.cache/trivy \
               "$TRIVY_IMAGE" image \
+                --skip-db-update --skip-java-db-update --disable-telemetry \
+                "${extra[@]}" \
                 --format json --output "/out/$name.json" \
                 --exit-code 0 "$image"
           done
@@ -105,6 +164,11 @@ jobs:
               echo "| $image | $(docker image inspect "$image" --format '{{.Size}}' | numfmt --to=iec) |"
             done
           } | tee trivy-out/comparison.md >> "$GITHUB_STEP_SUMMARY"
+
+      # Only the hardened image is gated; the baseline image is the "before"
+      # evidence and stays report-only.
+      - name: Hardened image gate (fixable CRITICAL)
+        run: scripts/image-gate.sh "$HARDENED" trivy-out/hardened.json
 
       - name: Upload results
         if: always()
