@@ -35,14 +35,19 @@ if [ "$(uname -s)" = Linux ]; then
   docker_user=(--user "$(id -u):$(id -g)" -e HOME=/tmp)
 fi
 
-# expected = commits with at least one added line in the log gitleaks reads;
-# it scans added lines only, so empty and deletion-only commits don't count
+# expected = commits gitleaks counts in the log it reads: any added line, or
+# removed lines in a file that stays. empty commits and whole-file deletions
+# don't count (tested with a 4-commit scratch repo, gitleaks v8.30.1)
 expected_commits() {
   # shellcheck disable=SC2086  # LOG_OPTS is meant to split
   git -C "$1" log -p -U0 --full-history $LOG_OPTS --format='@@COMMIT %H' |
     awk '/^@@COMMIT /{c=$2; seen[c]=0; next}
-         /^\+\+\+ /{next}
+         /^diff --git /{hdr=1; gone=0; next}
+         hdr && /^\+\+\+ /{gone=($2 == "/dev/null"); next}
+         /^@@/{hdr=0; next}
+         hdr{next}
          /^\+/{if (c != "") seen[c]=1}
+         /^-/{if (c != "" && !gone) seen[c]=1}
          END{n=0; for (k in seen) n+=seen[k]; print n}'
 }
 
