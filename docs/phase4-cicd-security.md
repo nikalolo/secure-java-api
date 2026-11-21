@@ -815,3 +815,237 @@ loop, so there the exit code (10 or 1) is what tells them apart.
   so the Semgrep gate has nothing to compare and is skipped; the Trivy gates still run.
 - **Trivy's secret check is a second net.** In a local trial (2026-11-16), Trivy reported no secret in a
   file holding the same fake AWS key that gitleaks finds. The `secrets` job is the gate for secrets.
+
+## Step 5: workflow hygiene
+
+Step 5 tidied the workflows themselves and put a linter in front of them. Two pull requests did the planned
+work; three more fixed problems that the new checks and the red tests turned up:
+
+| PR | Merged (UTC) | What |
+|---|---|---|
+| #25 | 2026-11-17 21:22 as `730b7fd` | permissions, timeouts, concurrency, `persist-credentials: false` |
+| #26 | 2026-11-18 14:46 as `f86cda7` | `workflow-lint` gate: actionlint and zizmor |
+| #28 | 2026-11-20 12:07 as `5fa5c35` | `history-scan.sh` counts commits the way gitleaks does |
+| #29 | 2026-11-21 16:10 as `8d06053` | the Maven retry uses `-U` |
+| #30 | 2026-11-21 16:32 as `8e1e6f9` | Maven 3.10.0 for the wrapper and the hardened build stage |
+
+### Permissions, timeouts, concurrency (PR #25)
+
+| Setting | Baseline (2026-11-12) | Now (5 workflows, 7 jobs) |
+|---|---|---|
+| Token permissions | `contents: read` at workflow level | `permissions: {}` at workflow level, `contents: read` per job |
+| `timeout-minutes` | 1 of 5 jobs | 7 of 7 jobs |
+| Concurrency group | 0 of 4 workflows | 5 of 5 |
+| `persist-credentials: false` | 1 of 5 checkouts | 7 of 7 |
+
+- **Permissions.** With `permissions: {}` at the top, a new job gets no token rights until it asks for
+  them. Every job asks only for `contents: read`.
+- **Timeouts.** `java-tests` 15 minutes, `script-tests` 10 and `build-and-scan` 30 were added; `scan`
+  (20), `secrets` (10) and `compare` (30) already had one, and `workflow-lint` (10) came with PR #26. A
+  hung job now ends instead of holding a runner for GitHub's default of 6 hours.
+- **Concurrency.** Every workflow uses the group
+  `${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}` with
+  `cancel-in-progress: true`. On a pull request a new push cancels the older run. Pushes to `main` and
+  scheduled runs get their run ID as the group, so they never cancel or replace each other.
+- **Proof.** On PR #25, the runs for `218ebba` (CI 44178293556, Code scan 44178293597, Hardened image
+  scan 44178293314) were cancelled when `75681a2` was pushed 23 seconds after `218ebba`; the runs for `75681a2`
+  completed green. On `main`, the API lists 0 cancelled runs between the merge of PR #25 and 2026-11-21.
+  A planned extra test, a push run and a dispatch run on `main` at the same time, was not done.
+- **Credentials.** Without `persist-credentials: false`, checkout keeps the job token so that later git
+  commands can use it. Since checkout v6 it is stored in a file in the runner's temporary directory, not
+  in `.git/config`, but every later step of the job can still use it. With `false`, nothing is kept.
+
+zizmor (regular persona) over the same changes: 17 findings at the baseline, 4 after step 2 (all
+`artipacked`), 0 after PR #25. On `main` today (`workflow-lint` on `4886931`, online mode) it audits 6 of
+6 files with 0 findings; the pedantic persona reports 7, all informational.
+
+### The `workflow-lint` gate (PR #26)
+
+`scripts/workflow-lint.sh` runs in the new job `workflow-lint` on every pull request and every push to
+`main`. It uses the same exit codes as the step 4 gates:
+
+- **actionlint 1.7.12** (digest-pinned container, with ShellCheck inside) checks the workflow syntax and
+  the shell in every `run:` step.
+- **zizmor 1.32.0** (digest-pinned container) checks the workflows and `dependabot.yml` for security
+  problems, online with the job's token. The gate fails on any finding that is not marked as ignored.
+- **Coverage check.** zizmor only warns about a workflow it cannot parse and audits the rest, so the
+  script counts the files zizmor completed and fails with 1 unless that equals the workflow files plus
+  `dependabot.yml` (6 today).
+- **zizmor's own exit codes are not used.** They depend on severity (for example 13 for a medium
+  finding) and would overlap with our 10. The script runs zizmor with `--no-exit-codes`, reads the JSON,
+  and decides itself.
+- The pedantic persona runs as well; it is printed, not gated.
+
+Local tests on throwaway copies before the pull request: a checkout without `persist-credentials: false`,
+an unquoted shell variable (ShellCheck SC2086) and a template injection in a new workflow each gave exit
+10; an unparseable workflow and a wrong image digest each gave exit 1.
+
+After one green run on `main`, `workflow-lint` was added to the ruleset; six checks are now required. The
+red test was PR #27, which removed `persist-credentials: false` from the `java-tests` checkout. After a
+rebase onto the fix below (head `c5b321c`), `workflow-lint` was the only red check (run 44733156998):
+`artipacked Low ./.github/workflows/ci.yml`, exit 10, and the pull request was BLOCKED. zizmor rated it
+Low; the baseline table above lists `artipacked` as Medium, and the reason for the difference was not
+looked into. PR #27 was closed without merging.
+
+### Finding: the commit count in `history-scan.sh` (PR #28)
+
+PR #27's first `secrets` run (44729880342) failed with exit 1: `commits scanned: 40 (expected 39)`. The
+extra commit was the pull request itself, `4e7067b`, which only deletes lines from `ci.yml`.
+
+The script compares the number of commits gitleaks scanned with its own count, so that a partial scan
+cannot pass. Its count only included commits that add a line. The rule behind it ("gitleaks skips
+deletion-only commits") came from the step 2 positive control, where the deletion removed a whole file.
+A throwaway repository with four commits (add lines, delete lines, delete a file, empty) showed what
+gitleaks v8.30.1 actually does: it scanned 2, the commit that adds lines and the commit that deletes
+lines from a file that remains. It skips empty commits and commits that only delete whole files.
+
+The fix counts every commit with an added or removed line, except lines of deleted files. After the fix,
+the expected and scanned counts matched in all four cases tested: the four-commit repository (2),
+PR #27's merge commit (40), the full local history with reflog (105) and the positive control (2). The
+check did its job: it went red when the two counts disagreed. The error was in our expectation, not in
+gitleaks, and it surfaced only now because no earlier commit in CI had deleted lines without adding any.
+
+### Finding: the Maven retry could not work (PR #29)
+
+Since step 4, the JAR builds retry once after 60 seconds. On 2026-11-20, `compare` (run 44733156996,
+attempt 1) showed that this retry could never succeed:
+
+1. Attempt 1 could not resolve `spring-boot-starter-parent:pom:4.1.2` ("present, but unavailable",
+   "Could not find artifact"). The log does not say which HTTP status Maven Central returned this time.
+2. Attempt 2 failed in under 0.1 seconds without asking Maven Central: "This failure was cached in the
+   local repository and resolution is not reattempted until the update interval of central has elapsed
+   or updates are forced".
+
+A rerun of the whole job passed. The fix adds `-U` ("force updates") to the second attempt only; the
+first attempt stays as it was, because `-U` sends extra requests to Maven Central, the opposite of what
+a rate limit needs. Local tests with Maven 3.9.16 and a throwaway local repository:
+
+- for a missing dependency and for a missing parent POM, a second plain run printed "failure was
+  cached", and a run with `-U` asked Maven Central again;
+- the loop from `code-scan.yml`, run against such a cached failure under `bash -e` and under
+  `bash -eo pipefail`: attempt 1 hit the cached failure, attempt 2 with `-U` asked Maven Central.
+
+Not changed: the Docker image builds (in `Dockerfile.hardened` the parent POM and all dependencies are
+resolved in the `dependency:go-offline` step; when that step fails, its result is thrown away, so the
+retry starts with an empty Maven repository) and `ci.yml`'s `./mvnw verify`, which still has no retry; retrying it would run
+the tests again and could hide a flaky test.
+
+Could the failure end up in the Actions cache and fail every later run? Not through setup-java. In
+setup-java v6.2.0 (`77dd5b2c`), the cleanup step saves the cache only when the job status is `success`
+(`saveCaches()` in `src/cleanup-java.ts`, `isJobStatusSuccess()` in `src/util.ts`), and a cache key that
+already exists is never overwritten.
+
+### Maven 3.10 and the 874 re-checks (PR #30)
+
+Step 3 found that the Maven builds it checked in CI logged 874 lines each (CI: 904) of the form "Artifact ... is present in
+the local repository, but cached from a remote repository ID that is unavailable in current build
+context, verifying that is downloadable from [central ...]": a check against Maven Central for every cached
+artifact (requests were not counted). One of those checks got the 429.
+
+**Cause.** The Maven cache on `main` (key `setup-java-Linux-x64-maven-14c13f...`, created 2026-11-11
+15:01 UTC) was saved by `ci.yml`'s `java-tests`, which then still ran the runner's own `mvn`, Maven
+3.10.0. Since step 2, every build reads that cache with the wrapper's Maven 3.9.16. The evidence:
+
+- the Code scan run of that same push, with Maven 3.9.16 and no cache, logged 0 such lines; the next
+  Code scan, which restored the cache, logged 874;
+- Maven 3.9.16 writing and reading its own local repository on this PC logs 0;
+- after the move below, with Maven 3.10.0 writing and reading the cache, all four Maven jobs log 0.
+
+What exactly Maven 3.10 writes that 3.9.16 does not accept was not investigated.
+
+**Version choice (2026-11-21).** Maven 3.10.1 exists (zip published 2026-11-11), but Docker Hub had no
+`maven:3.10.1-eclipse-temurin-17` image. The wrapper and the image must run the same Maven, so both moved
+to 3.10.0. The tag `3.10-eclipse-temurin-17` had been pushed again on 2026-11-20 with a new digest (JDK
+17.0.21.1). Under the rule "pin a digest at least 7 days old", `Dockerfile.hardened` pins the 2026-11-12
+digest `0362bf77...` instead; it still pulls, and `mvn -v` in it reports Maven 3.10.0 and Java 17.0.21.
+
+**Zip checks, repeated for the zip used:** its SHA-512 equals the `.sha512` on archive.apache.org (3.10.0
+has moved there; downloads.apache.org redirects) and on Maven Central; its SHA-256 equals
+`distributionSha256Sum` (`1f6d9909...`); `gpg --verify` reported a good signature from key
+`88BE34F94BDB2B5357044E2E3A387D43964143E3`, with the same limit as for PR #12 above.
+
+**The pull request** changes `maven-wrapper.properties` (both comment lines kept), the build stage of
+`Dockerfile.hardened`, the Dependabot bound for the `maven` Docker image (now `>= 3.10.17.1`) and the README.
+
+**Local checks before the pull request:**
+
+- `./mvnw verify`: 3 tests, 0 failures; the only warnings are the two known ones (a JVM class-sharing
+  notice and the expected 405 from the POST test).
+- Two clean builds produced the same `app.jar` (SHA-256 `cd569d7a...`).
+- The JAR contains the same 34 libraries as with Maven 3.9.16. Their order in `BOOT-INF/classpath.idx`
+  changed (alphabetical with 3.10.0). The order could only matter if two libraries contained the same
+  class; across the 10,759 classes there is none.
+- The hardened image, run with the locked-down flags from `hardened-scan.yml`: `/health` UP, POST 405,
+  unknown path 404, UID 10001, a write by root to the root filesystem refused, Spring Boot 4.1.2, Tomcat
+  11.0.27, Java 17.0.21.
+- `code-scan.sh` and `workflow-lint.sh` passed.
+
+**Watch plan after the merge.** The move changes the cache key, so `main` had to build a new cache. It
+was watched in five steps:
+
+| Step | What was checked | Result |
+|---|---|---|
+| 1. PR #30 | runs without a cache, everything downloaded | 4 Maven jobs green, 0 re-check lines, 0 retries, no 429 in the logs |
+| 2. Merge push (`8e1e6f9`) | which job saved the new cache, and did it pass | `java-tests` (CI 44925112850, success) saved `...-maven-7aa60298...` at 16:32:50 UTC; `scan`, `build-and-scan` and `compare` lost the race ("Unable to reserve cache") and passed |
+| 3. Next push (`4886931`, PR #31) | the new cache is restored and used | all 4 Maven jobs: cache hit on `7aa60298`, 0 re-check lines, 0 "failure was cached", 0 warnings |
+| 4. Caches API | exactly one new Maven key on `main` | `7aa60298` (and its wrapper key); the old `14c13f...` unused since 16:10 UTC; GitHub removes a cache after 7 days without use, so it will go by itself |
+| 5. Dependabot | no new `maven` tag proposed | the docker run after the merge (44925120285) opened no pull request; a digest-only update for the re-pushed tag is expected after its cooldown (around 2026-11-27), not seen yet |
+
+Step 2 depended on the setup-java rule above: a failed job cannot save, so the first cache under a new
+key cannot hold a failure.
+
+A weak check to avoid: all builds run with `-ntp`, which hides download progress lines. "0 lines with
+Downloading from central" in these logs therefore says nothing about whether anything was downloaded.
+
+### PR #31: setup-java 6.3.0
+
+Dependabot proposed setup-java 6.2.0 to 6.3.0 once its cooldown had passed. Checked on 2026-11-21:
+
+- **The pin.** The tag `v6.3.0` points directly to `d1374f8a`, the SHA in the pull request, and the only
+  change is that SHA in the four workflows. The commit is signed (verified by GitHub) and on setup-java's
+  `main`, as are all 5 commits between 6.2.0 and 6.3.0. The action still runs on `node24`.
+- **Release notes.** Java compiler warnings and errors are no longer shown as annotations on pull
+  requests unless `problem-matcher: true` is set. Our gates write their own `::error` lines, and a
+  compile error still fails the build, so nothing here depends on it. Also: an architecture check for
+  JDK file installs, support for a new Microsoft OpenJDK build and a JetBrains Runtime fix (we use Temurin), and `fast-xml-parser`
+  5.11.2 to 5.12.0, which fixes GHSA-474x-hrwr-fgx4 (low severity, `<= 5.11.2`).
+- **Cache saving after a failed job, checked again.** `src/cleanup-java.ts`, `src/util.ts` and
+  `src/cache.ts` are byte for byte the same as in 6.2.0. In `dist/cleanup/index.js`, the code the runner
+  actually executes, the success check is still in the save path. That file's only change is that the
+  three save functions now load chunk `230.index.js` instead of `80.index.js`.
+- **The new chunk.** `dist/cleanup/230.index.js` (2.37 MB) is the cache upload code (`@actions/cache`
+  and the Azure storage client) rebuilt with newer XML packages: `fast-xml-parser` 5.11.2 to 5.12.0,
+  `fast-xml-builder` 1.3.0 to 1.3.1, `strnum` 2.4.2 to 2.5.1 and `is-unsafe` 2.0.0 to 2.0.3. No package
+  was added. On npm, `is-unsafe` belongs to the same organisation and maintainer as `fast-xml-parser`; it was created on 2026-06-11, version 2.0.3 was published on
+  2026-11-03, and GitHub lists no advisory for it.
+- **Not checked:** the 2.37 MB chunk line by line, the other changed chunks under `dist/`, or the source
+  code of `is-unsafe`. We rely on the signed commit and on the setup-java maintainers building `dist/`
+  from that source.
+
+The Baseline image scan, which has no pull request trigger, was started by hand on the Dependabot branch
+(run 44927589631, green). PR #31 was merged on 2026-11-21 as `4886931`.
+
+### PR #32 stays open
+
+Right after the Maven move, Dependabot replaced PR #12 with PR #32: the wrapper from Maven 3.10.0 to
+3.10.1. It stays open and unmerged. There is no `maven:3.10.1-eclipse-temurin-17` image yet, so merging it
+would make CI build with 3.10.1 while the hardened image builds with 3.10.0. The wrapper and the image
+move together, by hand, once a 3.10.1 image digest is at least 7 days old.
+
+### Semgrep finds this document
+
+Since PR #24, Semgrep reports 2 findings instead of 1: `missing-user-entrypoint` at `Dockerfile:23`, and
+`spring-actuator-dangerous-endpoints-enabled` at line 744 of this document. That line is the PR #18 row of
+the step 4 red-test table, which quotes the actuator setting used in that test. The finding is a WARNING,
+so the gate (new ERROR findings only) ignores it; CI on `4886931` shows `findings: 2` and
+`new ERROR findings: 0`. It comes from the documentation, not from the application. The "Semgrep 1"
+numbers in step 2 are from before PR #24.
+
+### Known limits
+
+- **`java-tests` can still turn red on a 429.** `ci.yml`'s `./mvnw verify` has no retry. With the
+  re-checks gone, it makes far fewer requests to Maven Central than before.
+- **Automatic Dependency Submission is GitHub's own job.** It failed once with a 429 on PR #26; its
+  retries and cache are not under our control.
+- **The image Maven and the wrapper Maven are kept equal by hand.** Dependabot proposes wrapper updates
+  (PR #32) without knowing about the image.
