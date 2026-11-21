@@ -16,7 +16,7 @@ Each phase adds a security practice and records the before/after evidence.
 | 1 | Baseline: naive container + first Trivy scan | Done locally: 391 findings (8 CRITICAL, 134 HIGH), Spring Boot 3.5.7 |
 | 2 | Container hardening | Done locally: 113 findings (8 CRITICAL, 19 HIGH), non-root, read-only FS, Spring Boot 3.5.7 |
 | 3 | SAST (Semgrep), dependency and secret scanning | Done: app JAR 59 to 21 to 0 findings (Spring Boot 3.5.7 to 3.5.16 to 4.1.2), 0 secrets in history |
-| 4 | CI/CD security gates | Planned |
+| 4 | CI/CD security gates | Done: actions and images pinned, protected `main` with 6 required checks, Dependabot, merge-blocking gates (Trivy, Semgrep, gitleaks, image, workflow lint); Scorecard 3.8 to 5.5, zizmor 17 to 0 |
 | 5 | DAST (OWASP ZAP) | Planned |
 | 6 | Cloud and IaC security | Planned |
 | 7 | SBOM, signing, supply chain | Planned |
@@ -66,3 +66,4 @@ scripts/history-scan.sh
 - [Baseline config scan (Checkov, actionlint)](docs/baseline-config-scan.md)
 - [Phase 2: container hardening](docs/phase2-container-hardening.md)
 - [Phase 3: SAST, dependency and secret scanning](docs/phase3-sast-sca.md)
+- [Phase 4: CI/CD security](docs/phase4-cicd-security.md)
