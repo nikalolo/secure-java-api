@@ -41,13 +41,16 @@ jobs:
           cache: maven
 
       # Builds retry once: Maven Central sometimes answers 429.
+      # The Maven retry uses -U: Maven caches the failed lookup and would not ask again.
       - name: Build JAR
         run: |
+          update=()
           for attempt in 1 2; do
-            ./mvnw -B -ntp package -DskipTests && exit 0
+            ./mvnw -B -ntp "${update[@]}" package -DskipTests && exit 0
             if [ "$attempt" = 1 ]; then
-              echo "::warning title=Retry::Maven build failed, retrying in 60 s"
+              echo "::warning title=Retry::Maven build failed, retrying in 60 s with -U"
               sleep 60
+              update=(-U)
             fi
           done
           exit 1

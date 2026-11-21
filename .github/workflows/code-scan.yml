@@ -49,14 +49,17 @@ jobs:
           cache: maven
 
       # builds target/app.jar and fills ~/.m2, which trivy fs reads offline.
-      # retries once: maven central sometimes answers 429.
+      # retries once: maven central sometimes answers 429. the retry uses -U:
+      # maven caches the failed lookup and would not ask central again.
       - name: Build JAR
         run: |
+          update=()
           for attempt in 1 2; do
-            ./mvnw -B -ntp package -DskipTests && exit 0
+            ./mvnw -B -ntp "${update[@]}" package -DskipTests && exit 0
             if [ "$attempt" = 1 ]; then
-              echo "::warning title=Retry::Maven build failed, retrying in 60 s"
+              echo "::warning title=Retry::Maven build failed, retrying in 60 s with -U"
               sleep 60
+              update=(-U)
             fi
           done
           exit 1
