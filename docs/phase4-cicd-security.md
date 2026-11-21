@@ -2,7 +2,7 @@
 
 **Goal:** make the pipeline itself hard to tamper with: protected main branch, every action and image pinned
 by SHA or digest, automated update PRs, and scans that can fail a build.
-**Status:** in progress. This file starts with the "before" numbers; each step adds its "after".
+**Status:** done (2026-11-21). Baseline first, each step adds its "after", step 7 compares them.
 
 ## Baseline
 
@@ -1049,3 +1049,170 @@ numbers in step 2 are from before PR #24.
   retries and cache are not under our control.
 - **The image Maven and the wrapper Maven are kept equal by hand.** Dependabot proposes wrapper updates
   (PR #32) without knowing about the image.
+
+## Step 7: final evidence
+
+Measured on 2026-11-21 against `main` @ `f7a8282`, with the same tool versions as the baseline. Two runs
+differ: zizmor audited the whole repository (see below), and the Semgrep numbers come from CI, not from a
+local run. All five workflows were green on that commit.
+
+| Tool | How it was run |
+|---|---|
+| OpenSSF Scorecard v5.6.0 | the same release binary in WSL; the tarball's SHA-256 matched a freshly downloaded `scorecard_checksums.txt`, and the binary equals the one in the tarball; `--repo=github.com/nikalolo/secure-java-api --format=json --show-details`, which reported commit `f7a8282` |
+| zizmor 1.32.0 (PyPI) | regular, pedantic and auditor personas, online with a GitHub token and with `--offline` |
+| Semgrep 1.184.0 | `code-scan.sh` in CI (Code scan run 44937498208 on `f7a8282`) |
+
+### Scorecard: 3.8 to 5.5
+
+| Check | Baseline `748436f` | Steps 1-2 `8a27800` | Final `f7a8282` | Scorecard's reason (final) |
+|---|---|---|---|---|
+| Pinned-Dependencies | 0 | 10 | 10 | all dependencies are pinned: 17 of 17 GitHub-owned actions, 3 of 3 container images, 1 of 1 pip command |
+| Dependency-Update-Tool | 0 | 0 | 10 | update tool detected: Dependabot, `.github/dependabot.yml` |
+| Branch-Protection | 0 | 4 | 4 | branch protection is not maximal on development and all release branches |
+| Token-Permissions | 10 | 10 | 10 | workflow tokens follow the principle of least privilege |
+| Dangerous-Workflow | 10 | 10 | 10 | no dangerous workflow patterns detected |
+| Binary-Artifacts | 10 | 10 | 10 | no binaries found in the repo |
+| CI-Tests | 10 | 10 | 10 | 23 of 23 merged PRs checked by a CI test |
+| Vulnerabilities | 10 | 10 | 10 | 0 existing vulnerabilities detected |
+| Code-Review | 0 | 0 | 0 | 0 of 23 approved changesets |
+| SAST | 0 | 0 | 0 | 0 of 26 commits checked with a SAST tool |
+| License | 0 | 0 | 0 | license file not detected |
+| Security-Policy | 0 | 0 | 0 | security policy file not detected |
+| Maintained | 0 | 0 | 0 | project was created within the last 90 days |
+| CII-Best-Practices | 0 | 0 | 0 | no effort to earn an OpenSSF best practices badge detected |
+| Contributors | 0 | 0 | 0 | 0 contributing companies or organizations |
+| Fuzzing | 0 | 0 | 0 | project is not fuzzed |
+| Packaging | ? | ? | ? | packaging workflow not detected |
+| Signed-Releases | ? | ? | ? | no releases found |
+| **Overall** | **3.8** | **4.6** | **5.5** | context only |
+
+What changed and why:
+
+- **Pinned-Dependencies 0 to 10 (step 2).** Every `uses:` is pinned to a full commit SHA, every `FROM`
+  to a digest, and `pytest` is installed from a hashed requirements file. The repository setting that
+  requires full-length SHAs stops an unpinned action from running at all (red test PR #6). The count of
+  actions went from 13 to 17: 2 each for the `workflow-lint` workflow and the `secrets` job.
+- **Dependency-Update-Tool 0 to 10 (step 3).** Scorecard only checks that `dependabot.yml` exists. What
+  Dependabot actually did is in step 3 and step 5: PRs #10, #11, #13 and #31 were reviewed and merged,
+  #9 was closed, #12 was replaced by #32, which is held.
+- **Branch-Protection 0 to 4 (step 1).** Scorecard credits that changes need a pull request, the
+  required status checks, the up-to-date rule, blocked force pushes and deletion, and that the rules
+  apply to administrators.
+- **Token-Permissions stayed at 10, with different details.** At the baseline all workflows set
+  `contents: read` at the top. Now Scorecard lists `permissions: {}` at the top of each workflow and
+  `contents: read` for each of the 7 jobs (step 5).
+
+What stays low by design, or is out of scope for Phase 4:
+
+- **Code-Review 0 and Branch-Protection capped at 4.** Both count approving reviews. This repository has
+  one maintainer, and GitHub does not let an author approve their own pull request, so required
+  approvals were left out of the ruleset on purpose. All four Branch-Protection warnings are about
+  reviews: no required approvers, no stale review dismissal, no code owner review, no last-push
+  approval. With a second maintainer, required approvals would be the next change.
+- **SAST 0.** Semgrep runs on every pull request and every push to `main`, and its gate blocks new ERROR
+  findings, but Scorecard does not count it. The output does not say why. Uploading results to GitHub
+  code scanning (the optional step 6) was not done, so whether it would change this check was not
+  tested.
+- **Maintained 0** is time only: the repository is younger than 90 days.
+- **License, Security-Policy, CII-Best-Practices, Fuzzing, Contributors, Packaging, Signed-Releases**
+  were not Phase 4 goals. Signed releases belong to Phase 7.
+
+A note on running it: with `--commit=<sha>`, Scorecard v5.6.0 ran only 9 of the 18 checks on the same
+commit (Branch-Protection, Dependency-Update-Tool, SAST and others were missing) and scored 7.3. The
+numbers above come from the run without `--commit`, like the baseline.
+
+### zizmor: 17 to 0
+
+| Persona | Baseline (offline = online) | Final (offline = online) |
+|---|---|---|
+| regular | 17 | 0 |
+| pedantic | 26 | 7 |
+| auditor | 26 | 7 |
+
+- The 13 `unpinned-uses` (High) went with step 2, the 4 `artipacked` (Medium) with step 5.
+  `concurrency-limits` (Low, 4) went with the concurrency groups of step 5.
+- The 7 that remain under pedantic and auditor are all `anonymous-definition` (Informational): a
+  job without a `name:`, once for each of the 7 jobs. They do not affect security and are not gated.
+- The baseline audited `.github/workflows` (4 files). The final run audited the whole repository, 5
+  workflows plus `dependabot.yml`, all 6 completed; on `.github/workflows` alone the numbers are the same.
+- The `workflow-lint` job runs the regular persona on every pull request and fails on any finding.
+
+### Semgrep: 17 to 2
+
+| Rule | Baseline | Final |
+|---|---|---|
+| `github-actions-mutable-action-tag` | 13 | 0 |
+| custom rule: Docker image without `@sha256` | 3 | 0 |
+| `missing-user-entrypoint` (`Dockerfile:23`, the naive baseline image) | 1 | 1 |
+| `spring-actuator-dangerous-endpoints-enabled` (line 744 of this document, see step 5) | 0 | 1 |
+| **Total** | **17** | **2** |
+
+CI on `f7a8282`: 37 files scanned, `new ERROR findings: 0`, all gates passed, Trivy CRITICAL and HIGH 0,
+secrets 0.
+
+### Own counts
+
+| What | Baseline `748436f` | Final `f7a8282` |
+|---|---|---|
+| Actions referenced by tag, not SHA | 13 of 13 | 0 of 17 |
+| Images in workflow steps without a digest | 3 | 0 |
+| `FROM` lines without a digest | 3 of 3 | 0 of 3 |
+| Workflows without a `pull_request` trigger | 2 of 4 | 1 of 5: `baseline-scan.yml`, on purpose (report-only, started by hand on pull requests that need it) |
+| Workflows calling `mvn` instead of `./mvnw` | 3 of 4 | 0 of 5 |
+| Jobs on `ubuntu-latest` | 5 of 5 | 0 of 7 (all on `ubuntu-24.04`) |
+| Jobs with `timeout-minutes` | 1 of 5 | 7 of 7 |
+| Workflows with a `concurrency` group | 0 of 4 | 5 of 5 |
+| Jobs with their own `permissions` block | 0 of 5 | 7 of 7 |
+| Checkouts with `persist-credentials: false` | 1 of 5 | 7 of 7 |
+
+### Repository settings
+
+Read from the GitHub API on 2026-11-21.
+
+| Setting | Baseline | Final |
+|---|---|---|
+| Rulesets on `main` | none | `protect-main`: pull request required (squash only, 0 approvals), 6 required checks, no force push, no deletion, linear history, empty bypass list |
+| Required checks | none | `java-tests`, `script-tests`, `scan`, `secrets`, `compare`, `workflow-lint` |
+| Require actions pinned to a full SHA | off | on |
+| Dependabot alerts, security updates | off, off | on, on (0 open alerts) |
+| Default workflow token permissions | read | read |
+| Workflows may approve PRs | no | no |
+| Allowed actions | all | all |
+| Secret scanning, push protection | on, on | on, on |
+| Merge methods allowed (repository) | merge commit, squash, rebase | unchanged; the ruleset allows only squash on `main` |
+| Delete head branch on merge | off | off |
+
+### Gates that block a merge
+
+| Required check | Blocks on | Red test |
+|---|---|---|
+| `scan` | Trivy CRITICAL or HIGH in `pom.xml`, `tests/requirements.txt` or `app.jar`; a secret found by Trivy; a new Semgrep ERROR | PRs #17, #18 |
+| `secrets` | any gitleaks finding in the full history | private throwaway repository; PR #20 for the ruleset |
+| `compare` | a CRITICAL with a fix in the hardened image | PRs #22, #23 |
+| `workflow-lint` | any actionlint problem or zizmor finding | PR #27 |
+| `java-tests`, `script-tests` | failing tests | |
+
+The ruleset also requires the branch to be up to date with `main` before these checks count.
+
+### Open items
+
+- **PR #32 is held.** It moves the wrapper to Maven 3.10.1, but Docker Hub has no
+  `maven:3.10.1-eclipse-temurin-17` tag (checked 2026-11-21). The wrapper and the build image move
+  together by hand once such a digest is at least 7 days old.
+- **The runtime image digest is behind.** Checked by hand on 2026-11-21: the tag `eclipse-temurin:17-jre`
+  was pushed again on 2026-11-20 and now points to `sha256:541b08fc...`, while `Dockerfile.hardened` pins
+  `sha256:0b652128...`. Under the 7-day rule it can move from 2026-11-27, through a Dependabot digest
+  update or by hand. No digest-only update from Dependabot has been seen yet, so this check stays manual.
+  The build image `maven:3.10-eclipse-temurin-17` is in the same position (new digest pushed
+  2026-11-20).
+- **The concurrency test on `main` was never run.** On pull requests, a new push cancelling the older run
+  was shown (PR #25). That a push run and a dispatch run on `main` both complete was planned but not
+  tested; the API only shows 0 cancelled runs on `main` since PR #25.
+- **`artipacked` rated Low, not Medium.** In the red test (PR #27) zizmor rated the finding Low; at the
+  baseline the same audit was Medium. The gate fails on any severity, so the result was the same, but the
+  reason for the difference was not looked into.
+- **Scanner images are checked by hand.** Dependabot does not update the Trivy, Semgrep, gitleaks,
+  actionlint and zizmor images, which sit in workflow `env:` values and scripts. Trivy, Semgrep and
+  gitleaks were last checked on 2026-11-13 (Semgrep 1.185.0 existed then; we pin 1.184.0). actionlint and
+  zizmor were pinned on 2026-11-18 and have not been checked since.
+- **`java-tests` has no retry**, so a Maven Central 429 can still turn it red (step 5, known limits).
