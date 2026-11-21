@@ -3,7 +3,7 @@
 
 # ---- Stage 1: build -------------------------------------------------------
 # Full JDK + Maven exist only in this stage; none of it ships in the final image.
-FROM maven:3.9-eclipse-temurin-17@sha256:1a352420f7aba21f5ad08df31bab55f74c013fb491f1ae8ab1dd7ff9ed698584 AS build
+FROM maven:3.10-eclipse-temurin-17@sha256:0362bf77ae7b21e3e0a0f4b211e85eb973e2cf9a680b2d36210e580336bb2255 AS build
 WORKDIR /src
 
 # Copy pom.xml alone first: dependency downloads are cached as a layer and
