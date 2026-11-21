@@ -23,7 +23,7 @@ Each phase adds a security practice and records the before/after evidence.
 
 ## Run locally
 
-No Maven install needed: the Maven Wrapper downloads a pinned Maven 3.9.16
+No Maven install needed: the Maven Wrapper downloads a pinned Maven 3.10.0
 (checked against a SHA-256 in `.mvn/wrapper/maven-wrapper.properties`).
 Use `./mvnw` on Linux/macOS/Git Bash and `.\mvnw.cmd` on Windows.
 

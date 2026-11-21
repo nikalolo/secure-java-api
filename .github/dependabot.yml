@@ -55,9 +55,9 @@ updates:
       # tags read as maven major.minor plus jdk (3.9-eclipse-temurin-26 is "3.9.26"), so
       # semver-major can't hold the jdk. block every tag above the current one;
       # the current tag can still get digest refreshes. maven moves are manual:
-      # raise the bound with each move (3.10-eclipse-temurin-17 -> ">= 3.10.17.1").
+      # raise the bound with each move (3.11-eclipse-temurin-17 -> ">= 3.11.17.1").
       - dependency-name: maven
-        versions: [">= 3.9.17.1"]
+        versions: [">= 3.10.17.1"]
     groups:
       base-images:
         patterns: ["*"]
