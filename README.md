@@ -53,12 +53,22 @@ scripts/history-scan.sh
 
 ## CI workflows
 
-| Workflow | What it does |
-|---|---|
-| `ci.yml` | Java tests (`./mvnw verify`) and script tests (pytest) on every push/PR |
-| `baseline-scan.yml` | Builds the naive image, smoke-tests it, Trivy-scans it |
-| `hardened-scan.yml` | Builds both images, runs the hardened one locked down, asserts non-root and read-only FS, compares Trivy results |
-| `code-scan.yml` | Runs `scripts/code-scan.sh` (Semgrep, Trivy on pom and JAR, secrets) with canary checks, on push to main and every PR |
+Every change to `main` goes through a pull request. The jobs marked required must pass before it can
+be merged (ruleset `protect-main`). The gate scripts exit with 10 on a security finding and with 1 on a
+tool or network error, so the exit code of a red gate step shows which of the two it is.
+
+| Workflow | Runs on | Job | Required | What it does | Fails on |
+|---|---|---|---|---|---|
+| `ci.yml` | pull requests, push to `main` | `java-tests` | yes | `./mvnw verify` | a failing test |
+| | | `script-tests` | yes | pytest for `scripts/trivy_report.py`, installed from a hashed requirements file | a failing test |
+| `code-scan.yml` | pull requests, push to `main`, daily, by hand | `scan` | yes | `scripts/code-scan.sh`: Semgrep, Trivy on `pom.xml`, `tests/requirements.txt` and `app.jar`, Trivy secret scan, canary checks | Trivy CRITICAL or HIGH; a secret; a Semgrep ERROR finding that is new since the base commit (not on the daily run, which has no new commit to compare) |
+| | | `secrets` | yes | `scripts/history-scan.sh`: gitleaks over the full git history, with a built-in positive control | any leak |
+| `hardened-scan.yml` | pull requests, push to `main`, daily, by hand | `compare` | yes | builds both images, runs the hardened one locked down (non-root, read-only filesystem), compares their Trivy results, then `scripts/image-gate.sh` | the hardened container running as root or with a writable filesystem; a CRITICAL with a fixed version in the hardened image |
+| `workflow-lint.yml` | pull requests, push to `main`, by hand | `workflow-lint` | yes | `scripts/workflow-lint.sh`: actionlint (with ShellCheck) over the workflows, zizmor over the workflows and `dependabot.yml` | any actionlint problem; any zizmor finding at the default level (the stricter pedantic level is only printed) |
+| `baseline-scan.yml` | push to `main`, started by hand | `build-and-scan` | no | builds the naive image, smoke-tests it, Trivy-scans it | nothing: report-only, it is the "before" evidence |
+
+Accepted risks go in `.trivyignore`, each with a reason and a review date at most 90 days ahead. Details
+and red tests for every gate: [Phase 4](docs/phase4-cicd-security.md).
 
 ## Evidence
 
