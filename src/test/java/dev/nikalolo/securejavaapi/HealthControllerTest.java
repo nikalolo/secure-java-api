@@ -1,7 +1,6 @@
 package dev.nikalolo.securejavaapi;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -27,17 +26,6 @@ class HealthControllerTest {
                 .andExpect(jsonPath("$.status").value("UP"));
     }
 
-    // Only GET is mapped. A security-minded test: verify the endpoint
-    // doesn't silently accept other methods.
-    @Test
-    void healthRejectsPost() throws Exception {
-        mockMvc.perform(post("/health"))
-                .andExpect(status().isMethodNotAllowed());
-    }
-
-    @Test
-    void unknownPathReturns404() throws Exception {
-        mockMvc.perform(get("/does-not-exist"))
-                .andExpect(status().isNotFound());
-    }
+    // Wrong methods and unknown paths are tested in SecurityConfigTest:
+    // the security rules answer them with 403 before Spring MVC sees them.
 }
