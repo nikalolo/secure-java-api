@@ -1,0 +1,7 @@
+# accepted risks for the dast gate (scripts/dast-scan.sh checks this file).
+# each entry: a "# reason:" line, then the zap rule id and a review date, for example
+#   # reason: version banner comes from the proxy in front; remove when it is stripped
+#   10036 exp:2026-12-31
+# ids: zap rule ids (digits only). an entry covers every url the rule fires on.
+# exp: at most 90 days ahead. once the date passes, the alert counts again and
+# the gate fails until it is decided anew.

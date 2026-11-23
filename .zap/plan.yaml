@@ -1,0 +1,40 @@
+# zap automation framework plan for scripts/dast-scan.sh: passive rules only,
+# against the app container on an internal network. every url must stay on
+# http://app:8080 (the script refuses anything else before zap starts).
+env:
+  contexts:
+    - name: app
+      urls:
+        - http://app:8080/
+  parameters:
+    failOnError: true
+    failOnWarning: false
+    progressToStdout: true
+jobs:
+  - type: passiveScan-config
+    parameters:
+      maxAlertsPerRule: 10
+      enableTags: false
+  # no responseCode checks here: the script checks status codes itself, so a
+  # wrong code is a finding (exit 10), not a plan warning (exit 1)
+  - type: requestor
+    requests:
+      - url: http://app:8080/health
+        method: GET
+      # canary: zap must flag a password in the url (10024), or it scanned nothing
+      - url: http://app:8080/health?password=zapcanary
+        method: GET
+      - url: http://app:8080/health
+        method: POST
+      - url: http://app:8080/does-not-exist
+        method: GET
+      - url: http://app:8080/error
+        method: GET
+  - type: passiveScan-wait
+    parameters:
+      maxDuration: 0
+  - type: report
+    parameters:
+      template: traditional-json
+      reportDir: /zap/out
+      reportFile: dast.json
