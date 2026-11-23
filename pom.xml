@@ -30,6 +30,12 @@
             <artifactId>spring-boot-starter-webmvc</artifactId>
         </dependency>
 
+        <!-- Security headers on every response and deny-by-default access (SecurityConfig). -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security</artifactId>
+        </dependency>
+
         <!-- JUnit 6, MockMvc, AssertJ. Test scope: never shipped in the JAR. -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
