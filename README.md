@@ -8,6 +8,7 @@ Each phase adds a security practice and records the before/after evidence.
 | Method | Path | Response |
 |---|---|---|
 | GET | `/health` | `{"status":"UP"}` |
+| any | anything else | 403 (deny by default) |
 
 ## Progress
 
@@ -17,7 +18,7 @@ Each phase adds a security practice and records the before/after evidence.
 | 2 | Container hardening | Done locally: 113 findings (8 CRITICAL, 19 HIGH), non-root, read-only FS, Spring Boot 3.5.7 |
 | 3 | SAST (Semgrep), dependency and secret scanning | Done: app JAR 59 to 21 to 0 findings (Spring Boot 3.5.7 to 3.5.16 to 4.1.2), 0 secrets in history |
 | 4 | CI/CD security gates | Done: actions and images pinned, protected `main` with 6 required checks, Dependabot, merge-blocking gates (Trivy, Semgrep, gitleaks, image, workflow lint); Scorecard 3.8 to 5.5, zizmor 17 to 0 |
-| 5 | DAST (OWASP ZAP) | Planned |
+| 5 | DAST (OWASP ZAP) | Done: 2 Low findings (missing `nosniff`, error disclosure) fixed by deny by default and security headers; `dast` gate on every PR, 7 required checks |
 | 6 | Cloud and IaC security | Planned |
 | 7 | SBOM, signing, supply chain | Planned |
 
@@ -49,6 +50,10 @@ scripts/code-scan.sh
 
 # One-off secret scan of the full local git history (gitleaks)
 scripts/history-scan.sh
+
+# DAST: ZAP against the hardened image on an internal Docker network (needs Docker, jq)
+docker build -t secure-java-api:hardened -f Dockerfile.hardened .
+scripts/dast-scan.sh secure-java-api:hardened
 ```
 
 ## CI workflows
@@ -65,10 +70,12 @@ tool or network error, so the exit code of a red gate step shows which of the tw
 | | | `secrets` | yes | `scripts/history-scan.sh`: gitleaks over the full git history, with a built-in positive control | any leak |
 | `hardened-scan.yml` | pull requests, push to `main`, daily, by hand | `compare` | yes | builds both images, runs the hardened one locked down (non-root, read-only filesystem), compares their Trivy results, then `scripts/image-gate.sh` | the hardened container running as root or with a writable filesystem; a CRITICAL with a fixed version in the hardened image |
 | `workflow-lint.yml` | pull requests, push to `main`, by hand | `workflow-lint` | yes | `scripts/workflow-lint.sh`: actionlint (with ShellCheck) over the workflows, zizmor over the workflows and `dependabot.yml` | any actionlint problem; any zizmor finding at the default level (the stricter pedantic level is only printed) |
+| `dast.yml` | pull requests, push to `main`, by hand | `dast` | yes | builds the hardened image, runs it next to OWASP ZAP on an internal Docker network with no way out (`scripts/dast-scan.sh`), checks status codes and security headers itself, then ZAP's passive rules | a wrong status code or missing security header; a ZAP alert rated Low or higher that `.zap/accepted-risks` does not cover |
 | `baseline-scan.yml` | push to `main`, started by hand | `build-and-scan` | no | builds the naive image, smoke-tests it, Trivy-scans it | nothing: report-only, it is the "before" evidence |
 
 Accepted risks go in `.trivyignore`, each with a reason and a review date at most 90 days ahead. Details
-and red tests for every gate: [Phase 4](docs/phase4-cicd-security.md).
+and red tests for every gate: [Phase 4](docs/phase4-cicd-security.md). The `dast` gate keeps its accepted
+risks in `.zap/accepted-risks` (same rules): [Phase 5](docs/phase5-dast.md).
 
 ## Evidence
 
@@ -77,3 +84,4 @@ and red tests for every gate: [Phase 4](docs/phase4-cicd-security.md).
 - [Phase 2: container hardening](docs/phase2-container-hardening.md)
 - [Phase 3: SAST, dependency and secret scanning](docs/phase3-sast-sca.md)
 - [Phase 4: CI/CD security](docs/phase4-cicd-security.md)
+- [Phase 5: DAST with OWASP ZAP](docs/phase5-dast.md)

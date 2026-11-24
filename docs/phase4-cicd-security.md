@@ -1215,6 +1215,6 @@ The ruleset also requires the branch to be up to date with `main` before these c
   actionlint and zizmor images, which sit in workflow `env:` values and scripts. Trivy, Semgrep and
   gitleaks were last checked on 2026-11-13 (Semgrep 1.185.0 existed then; we pin 1.184.0). actionlint and
   zizmor were pinned on 2026-11-18 and have not been checked since. Phase 5 adds the ZAP image
-  `zaproxy/zap-bare:2.17.0` in `scripts/dast-scan.sh` to this list. Last checked 2026-11-24: the tag still
+  `zaproxy/zap-bare:2.17.0` in `scripts/dast-scan.sh` to this list. Last checked 2026-11-23: the tag still
   points to the pinned digest `30b1344e...` (pushed 2026-11-03), and 2.17.0 is ZAP's latest release.
 - **`java-tests` has no retry**, so a Maven Central 429 can still turn it red (step 5, known limits).
